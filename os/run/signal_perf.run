@@ -1,0 +1,46 @@
+build "core init test/signal/client test/signal/server"
+
+create_boot_directory
+
+install_config {
+	<config>
+		<parent-provides>
+			<service name="ROM"/>
+			<service name="RAM"/>
+			<service name="CPU"/>
+			<service name="RM"/>
+			<service name="CAP"/>
+			<service name="PD"/>
+			<service name="IRQ"/>
+			<service name="IO_PORT"/>
+			<service name="IO_MEM"/>
+			<service name="SIGNAL"/>
+			<service name="LOG"/>
+		</parent-provides>
+		<default-route>
+			<any-service> <parent/> <any-child/> </any-service>
+		</default-route>
+		<start name="test-signal-server">
+			<resource name="RAM" quantum="10M"/>
+			<provides><service name="SIGPERF"/></provides>
+		</start>
+		<start name="test-signal-client">
+			<resource name="RAM" quantum="10M"/>
+		</start>
+	</config>
+}
+
+build_boot_image "core init timer test-signal-server test-signal-client"
+
+append qemu_args "-nographic -m 64"
+
+run_genode_until {.*signalling perf test.*} 30
+set serial_id $spawn_id
+
+set TIME_start [clock clicks -milliseconds]
+
+run_genode_until {.*signalling perf test finished.*} 120 $serial_id
+
+set TIME_taken [expr [clock clicks -milliseconds] - $TIME_start]
+
+puts "\ntime taken : $TIME_taken\n"
