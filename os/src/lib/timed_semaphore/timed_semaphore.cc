@@ -17,11 +17,17 @@
 void Genode::Timeout_thread::entry()
 {
 	while (true) {
-		_timer.msleep(GRANULARITY_MSECS);
-		_jiffies += GRANULARITY_MSECS;
+		_receiver.wait_for_signal();
+
+		_time = _timer.elapsed_ms();
 
 		/* handle timouts of this point in time */
-		Genode::Alarm_scheduler::handle(_jiffies);
+		Genode::Alarm_scheduler::handle(_time);
+
+		/* schedule next timeout */
+		Genode::Alarm::Time n;
+		if (next_deadline(&n))
+			_timer.trigger_once((n-_time)*1000);
 	}
 }
 

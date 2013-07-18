@@ -34,22 +34,33 @@ namespace Genode {
 	{
 		private:
 
-			Timer::Connection   _timer;   /* timer session */
-			Genode::Alarm::Time _jiffies; /* jiffies counter */
+			Timer::Connection   _timer;    /* timer session   */
+			Signal_context      _context;
+			Signal_receiver     _receiver;
+			Genode::Alarm::Time _time;     /* current time    */
 
 			void entry(void);
 
 		public:
 
-			enum { GRANULARITY_MSECS = 10 };
-
-			Timeout_thread()
-			: Thread<4096>("alarm-timer"), _jiffies(0)
+			Timeout_thread() : Thread<4096>("alarm-timer")
 			{
+				_timer.sigh(_receiver.manage(&_context));
 				start();
 			}
 
-			Genode::Alarm::Time time(void) { return _jiffies; }
+			Genode::Alarm::Time time(void) { return _time; }
+
+			void schedule_ms(Alarm *alarm, Genode::Alarm::Time duration)
+			{
+				_time = _timer.elapsed_ms();
+				schedule_absolute(alarm, _time + duration);
+
+				/* if new alarm is earliest in time, reprogram the timer */
+				Genode::Alarm::Time n;
+				if (next_deadline(&n) && n == (_time + duration))
+					_timer.trigger_once(duration*1000);
+			}
 
 			/*
 			 * Returns the singleton timeout-thread used for all timeouts.
@@ -134,18 +145,20 @@ namespace Genode {
 					Timed_semaphore *_sem;       /* Semaphore we block on */
 					Element         *_element;   /* Queue element timeout belongs to */
 					bool             _triggered; /* Timeout expired */
+					Time             _start;
 
 				public:
 
 					Timeout(Time duration, Timed_semaphore *s, Element *e)
 					: _sem(s), _element(e), _triggered(false)
 					{
-						Time t = duration + Timeout_thread::alarm_timer()->time();
-						Timeout_thread::alarm_timer()->schedule_absolute(this, t);
+						Timeout_thread::alarm_timer()->schedule_ms(this, duration);
+						_start = Timeout_thread::alarm_timer()->time();
 					}
 
-					void discard(void) { Timeout_thread::alarm_timer()->discard(this); }
+					void discard(void)   { Timeout_thread::alarm_timer()->discard(this); }
 					bool triggered(void) { return _triggered; }
+					Time start()         { return _start;     }
 
 				protected:
 
@@ -177,8 +190,6 @@ namespace Genode {
 			 */
 			Alarm::Time down(Alarm::Time t)
 			{
-				/* Track start time */
-				Alarm::Time starttime = Timeout_thread::alarm_timer()->time();
 				Semaphore::_meta_lock.lock();
 
 				if (--Semaphore::_cnt < 0) {
@@ -189,11 +200,6 @@ namespace Genode {
 						Semaphore::_meta_lock.unlock();
 						throw Genode::Nonblocking_exception();
 					}
-
-					/* Warn if someone choose a undersized timeout */
-					if (t < Timeout_thread::GRANULARITY_MSECS && t > 0)
-						PWRN("We only support granularity of %d msecs, you choose %ld",
-						     Timeout_thread::GRANULARITY_MSECS, t);
 
 					/*
 					 * Create semaphore queue element representing the thread
@@ -222,12 +228,13 @@ namespace Genode {
 					 */
 					if (to.triggered())
 						throw Genode::Timeout_exception();
+
+					/* return blocking time */
+					return Timeout_thread::alarm_timer()->time() - to.start();
 				} else {
 					Semaphore::_meta_lock.unlock();
 				}
-
-				/* return blocking time */
-				return Timeout_thread::alarm_timer()->time() - starttime;
+				return 0;
 			}
 
 
