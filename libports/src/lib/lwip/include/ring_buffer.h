@@ -22,7 +22,7 @@
 #include <base/exception.h>
 #include <util/string.h>
 
-#include <os/timed_semaphore.h>
+#include <thread.h>
 
 namespace Lwip {
 
@@ -42,7 +42,7 @@ class Ring_buffer
 
 		int                     _head;
 		int                     _tail;
-		Genode::Timed_semaphore _sem;        /* element counter */
+		Lwip::Semaphore         _sem;        /* element counter */
 		Genode::Lock            _head_lock;  /* synchronize add */
 
 		void*                   _queue[QUEUE_SIZE];
@@ -94,9 +94,9 @@ class Ring_buffer
 			if (t == NO_BLOCK) {
 				time = _sem.down(0);
 			} else if (t == 0) {
-				time = Genode::Timeout_thread::alarm_timer()->time();
+				time = Timeout_handler::alarm_timer()->time();
 				_sem.down();
-				time = Genode::Timeout_thread::alarm_timer()->time() - time;
+				time = Timeout_handler::alarm_timer()->time() - time;
 			} else {
 				time = _sem.down(t);
 			}

@@ -32,69 +32,92 @@ extern "C" {
 #include <nic/packet_allocator.h>
 #include <nic_session/connection.h>
 
+namespace Lwip {
+	class Nic;
+}
 
-/*
- * Thread, that receives packets by the nic-session interface.
- */
-class Nic_receiver_thread : public Genode::Thread<8192>
+
+extern "C" {
+	static void genode_netif_input(struct netif *netif);
+}
+
+class Lwip::Nic
 {
 	private:
 
-		Nic::Connection  *_nic;       /* nic-session */
-		Packet_descriptor _rx_packet; /* actual packet received */
-		struct netif     *_netif;     /* LwIP network interface structure */
+		enum {
+			PACKET_SIZE = ::Nic::Packet_allocator::DEFAULT_PACKET_SIZE,
+			BUF_SIZE    = ::Nic::Session::QUEUE_SIZE * PACKET_SIZE,
+		};
 
-		void _tx_ack(bool block = false)
+		::Nic::Packet_allocator _tx_block_alloc;
+		::Nic::Connection       _nic;       /* nic-session */
+		Packet_descriptor       _rx_packet; /* actual packet received */
+		struct netif           *_netif;     /* LwIP network interface structure */
+
+		Genode::Signal_dispatcher<Nic> _sink_ack;
+		Genode::Signal_dispatcher<Nic> _sink_submit;
+		Genode::Signal_dispatcher<Nic> _source_ack;
+		Genode::Signal_dispatcher<Nic> _source_submit;
+
+		void _dummy(unsigned) {}
+
+		void _ready_to_submit(unsigned)
+		{
+			/* as long as packets are available, and we can ack them */
+			while (_nic.rx()->packet_avail()) {
+				_rx_packet = _nic.rx()->get_packet();
+
+				if (!_rx_packet.valid()) continue;
+				genode_netif_input(_netif);
+
+				if (!_nic.rx()->ready_to_ack()) {
+					if (verbose)
+						PWRN("ack state FULL");
+					return;
+				}
+
+				/* Acknowledge the packet */
+				_nic.rx()->acknowledge_packet(_rx_packet);
+			}
+		}
+
+		void _ready_to_ack(unsigned)
 		{
 			/* check for acknowledgements */
-			while (nic()->tx()->ack_avail() || block) {
-				Packet_descriptor acked_packet = nic()->tx()->get_acked_packet();
-				nic()->tx()->release_packet(acked_packet);
-				block = false;
+			while (_nic.tx()->ack_avail()) {
+				Packet_descriptor acked_packet = _nic.tx()->get_acked_packet();
+				_nic.tx()->release_packet(acked_packet);
 			}
 		}
 
 	public:
 
-		Nic_receiver_thread(Nic::Connection *nic, struct netif *netif)
-		: Genode::Thread<8192>("nic-recv"), _nic(nic), _netif(netif) {}
+		Nic(struct netif *netif, Genode::Signal_receiver &recv)
+		: _tx_block_alloc(Genode::env()->heap()),
+		  _nic(&_tx_block_alloc, BUF_SIZE, BUF_SIZE),
+		  _netif(netif),
+		  _sink_ack(recv,      *this, &Nic::_dummy),
+		  _sink_submit(recv,   *this, &Nic::_ready_to_submit),
+		  _source_ack(recv,    *this, &Nic::_ready_to_ack),
+		  _source_submit(recv, *this, &Nic::_dummy)
+		{
+			_nic.rx_channel()->sigh_ready_to_ack(_sink_ack);
+			_nic.rx_channel()->sigh_packet_avail(_sink_submit);
+			_nic.tx_channel()->sigh_ack_avail(_source_ack);
+			_nic.tx_channel()->sigh_ready_to_submit(_source_submit);
+		}
 
-		void entry();
-		Nic::Connection  *nic() { return _nic; };
+		::Nic::Connection  *nic()     { return &_nic;      };
 		Packet_descriptor rx_packet() { return _rx_packet; };
-
-		Packet_descriptor alloc_tx_packet(Genode::size_t size)
-		{
-			while (true) {
-				try {
-					Packet_descriptor packet = nic()->tx()->alloc_packet(size);
-					return packet;
-				} catch(Nic::Session::Tx::Source::Packet_alloc_failed) {
-					/* packet allocator exhausted, wait for acknowledgements */
-					_tx_ack(true);
-				}
-			}
-		}
-
-		void submit_tx_packet(Packet_descriptor packet)
-		{
-			nic()->tx()->submit_packet(packet);
-			/* check for acknowledgements */
-			_tx_ack();
-		}
-
-		char *content(Packet_descriptor packet) {
-			return nic()->tx()->packet_content(packet); }
 };
 
+extern Genode::Signal_receiver receiver;
 
 /*
  * C-interface
  */
 extern "C" {
-
-	static void  genode_netif_input(struct netif *netif);
-
 
 	/**
 	 * This function should do the actual transmission of the packet. The packet is
@@ -114,31 +137,37 @@ extern "C" {
 	static err_t
 	low_level_output(struct netif *netif, struct pbuf *p)
 	{
-		Nic_receiver_thread *th = reinterpret_cast<Nic_receiver_thread*>(netif->state);
+		Lwip::Nic *nic = reinterpret_cast<Lwip::Nic*>(netif->state);
 
 #if ETH_PAD_SIZE
 		pbuf_header(p, -ETH_PAD_SIZE); /* drop the padding word */
 #endif
-		Packet_descriptor tx_packet = th->alloc_tx_packet(p->tot_len);
-		char *tx_content            = th->content(tx_packet);
+		try {
+			Packet_descriptor tx_packet = nic->nic()->tx()->alloc_packet(p->tot_len);
+			char *tx_content            = nic->nic()->tx()->packet_content(tx_packet);
 
-		/*
-		 * Iterate through all pbufs and
-		 * copy payload into packet's payload
-		 */
-		for(struct pbuf *q = p; q != NULL; q = q->next) {
-			char *src = (char*) q->payload;
-			Genode::memcpy(tx_content, src, q->len);
-			tx_content += q->len;
-		}
+			/*
+			 * Iterate through all pbufs and
+			 * copy payload into packet's payload
+			 */
+			for(struct pbuf *q = p; q != NULL; q = q->next) {
+				char *src = (char*) q->payload;
+				Genode::memcpy(tx_content, src, q->len);
+				tx_content += q->len;
+			}
 
-		/* Submit packet */
-		th->submit_tx_packet(tx_packet);
+			/* Submit packet */
+			nic->nic()->tx()->submit_packet(tx_packet);
 
 #if ETH_PAD_SIZE
-		pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
+			pbuf_header(p, ETH_PAD_SIZE); /* reclaim the padding word */
 #endif
-		LINK_STATS_INC(link.xmit);
+			LINK_STATS_INC(link.xmit);
+
+		} catch(::Nic::Session::Tx::Source::Packet_alloc_failed) {
+			return ERR_MEM;
+		}
+
 		return ERR_OK;
 	}
 
@@ -154,11 +183,10 @@ extern "C" {
 	static struct pbuf *
 	low_level_input(struct netif *netif)
 	{
-		Nic_receiver_thread *th = reinterpret_cast<Nic_receiver_thread*>(netif->state);
-		Nic::Connection *nic    = th->nic();
-		Packet_descriptor rx_packet = th->rx_packet();
-		char *rx_content        = nic->rx()->packet_content(rx_packet);
-		u16_t len               = rx_packet.size();
+		Lwip::Nic        *nic        = reinterpret_cast<Lwip::Nic*>(netif->state);
+		Packet_descriptor rx_packet  = nic->rx_packet();
+		char             *rx_content = nic->nic()->rx()->packet_content(rx_packet);
+		u16_t             len        = rx_packet.size();
 
 #if ETH_PAD_SIZE
 		len += ETH_PAD_SIZE; /* allow room for Ethernet padding */
@@ -189,9 +217,6 @@ extern "C" {
 			LINK_STATS_INC(link.memerr);
 			LINK_STATS_INC(link.drop);
 		}
-
-		/* Acknowledge the packet */
-		nic->rx()->acknowledge_packet(rx_packet);
 		return p;
 	}
 
@@ -205,8 +230,7 @@ extern "C" {
 	 *
 	 * @param netif the lwip network interface structure for this genode_netif
 	 */
-	static void
-	genode_netif_input(struct netif *netif)
+	static void genode_netif_input(struct netif *netif)
 	{
 		/*
 		 * Move received packet into a new pbuf,
@@ -243,63 +267,32 @@ extern "C" {
 		using namespace Genode;
 		LWIP_ASSERT("netif != NULL", (netif != NULL));
 
-		/* Initialize nic-session */
-		enum {
-			PACKET_SIZE = Nic::Packet_allocator::DEFAULT_PACKET_SIZE,
-			BUF_SIZE    = Nic::Session::QUEUE_SIZE * PACKET_SIZE,
-		};
-
-		Nic::Packet_allocator *tx_block_alloc = new (env()->heap())
-		                                        Nic::Packet_allocator(env()->heap());
-
-		Nic::Connection *nic = 0;
 		try {
-			nic = new (env()->heap()) Nic::Connection(tx_block_alloc, BUF_SIZE, BUF_SIZE);
-		} catch (Parent::Service_denied) {
-			destroy(env()->heap(), tx_block_alloc);
+			Lwip::Nic *nic = new (env()->heap()) Lwip::Nic(netif, receiver);
+
+			/* Store nic object address in user-defined netif struct part */
+			netif->state      = (void*) nic;
+#if LWIP_NETIF_HOSTNAME
+			netif->hostname   = "lwip";
+#endif /* LWIP_NETIF_HOSTNAME */
+			netif->name[0]    = 'e';
+			netif->name[1]    = 'n';
+			netif->output     = etharp_output;
+			netif->linkoutput = low_level_output;
+			netif->mtu        = 1500;
+			netif->hwaddr_len = ETHARP_HWADDR_LEN;
+			netif->flags      = NETIF_FLAG_BROADCAST |
+			                    NETIF_FLAG_ETHARP    |
+			                    NETIF_FLAG_LINK_UP;
+
+			/* Get MAC address from nic-session and set it accordingly */
+			Nic::Mac_address _mac = nic->nic()->mac_address();
+			for(int i=0; i<6; ++i)
+				netif->hwaddr[i] = _mac.addr[i];
+
+			return ERR_OK;
+		} catch (...) {
 			return ERR_IF;
 		}
-
-		/* Setup receiver thread */
-		Nic_receiver_thread *th = new (env()->heap())
-			Nic_receiver_thread(nic, netif);
-
-		/* Store receiver thread address in user-defined netif struct part */
-		netif->state      = (void*) th;
-#if LWIP_NETIF_HOSTNAME
-		netif->hostname   = "lwip";
-#endif /* LWIP_NETIF_HOSTNAME */
-		netif->name[0]    = 'e';
-		netif->name[1]    = 'n';
-		netif->output     = etharp_output;
-		netif->linkoutput = low_level_output;
-		netif->mtu        = 1500;
-		netif->hwaddr_len = ETHARP_HWADDR_LEN;
-		netif->flags      = NETIF_FLAG_BROADCAST |
-		                    NETIF_FLAG_ETHARP    |
-		                    NETIF_FLAG_LINK_UP;
-
-		/* Get MAC address from nic-session and set it accordingly */
-		Nic::Mac_address _mac = nic->mac_address();
-		for(int i=0; i<6; ++i)
-			netif->hwaddr[i] = _mac.addr[i];
-
-		th->start();
-
-		return ERR_OK;
 	}
 } /* extern "C" */
-
-
-void Nic_receiver_thread::entry()
-{
-	while(true)
-	{
-		/*
-		 * Block until we receive a packet,
-		 * then call input function.
-		 */
-		_rx_packet = _nic->rx()->get_packet();
-		genode_netif_input(_netif);
-	}
-}

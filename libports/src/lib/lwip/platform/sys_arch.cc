@@ -16,7 +16,6 @@
 #include <base/env.h>
 #include <base/lock.h>
 #include <parent/parent.h>
-#include <os/timed_semaphore.h>
 
 /* LwIP includes */
 #include <lwip/genode.h>
@@ -44,12 +43,25 @@ namespace Lwip {
 }
 
 
+Lwip::Thread* Lwip::Thread::_current = 0;
+
+
+extern Genode::Signal_receiver receiver;
+Genode::Signal_receiver receiver;
+
+Lwip::Timeout_handler* Lwip::Timeout_handler::alarm_timer()
+{
+	static Lwip::Timeout_handler _alarm_timer(receiver);
+	return &_alarm_timer;
+}
+
+
 /**
  * Returns lock used to synchronize with tcpip thread's startup.
  */
-static Genode::Lock *startup_lock()
+static Lwip::Semaphore *startup_lock()
 {
-	static Genode::Lock _startup_lock(Genode::Lock::LOCKED);
+	static Lwip::Semaphore _startup_lock(0);
 	return &_startup_lock;
 }
 
@@ -67,9 +79,9 @@ static Lwip::Mutex *global_mutex()
 /**
  * Returns a timed semaphore used to wait for DHCP to come up.
  */
-static Genode::Timed_semaphore *dhcp_semaphore()
+static Lwip::Semaphore *dhcp_semaphore()
 {
-	static Genode::Timed_semaphore _sem;
+	static Lwip::Semaphore _sem;
 	return &_sem;
 }
 
@@ -79,7 +91,7 @@ static Genode::Timed_semaphore *dhcp_semaphore()
  */
 static void startup_done(void *arg)
 {
-	startup_lock()->unlock();
+	startup_lock()->up();
 }
 
 
@@ -128,9 +140,11 @@ extern "C" {
 
 	void lwip_tcpip_init()
 	{
+		Lwip::Thread::initialize();
+
 		/* call the tcpip initialization code and block, until it's initialized */
 		tcpip_init(startup_done, 0);
-		startup_lock()->lock();
+		startup_lock()->down();
 	}
 
 
@@ -176,7 +190,7 @@ extern "C" {
 				/* Block until DHCP succeeded or a timeout was triggered */
 				try {
 					dhcp_semaphore()->down(20000);
-				} catch (Genode::Timeout_exception) {
+				} catch (Lwip::Timeout_exception) {
 					PWRN("DHCP timed out!");
 					return 1;
 				}
@@ -213,8 +227,8 @@ extern "C" {
 	err_t sys_sem_new(sys_sem_t* sem, u8_t count)
 	{
 		try {
-			Genode::Timed_semaphore *_sem = new (Genode::env()->heap())
-			                                Genode::Timed_semaphore(count);
+			Lwip::Semaphore *_sem =
+				new (Genode::env()->heap()) Lwip::Semaphore(count);
 			sem->ptr = _sem;
 			return ERR_OK;
 		} catch (Genode::Allocator::Out_of_memory) {
@@ -237,8 +251,8 @@ extern "C" {
 	void sys_sem_free(sys_sem_t* sem)
 	{
 		try {
-			Genode::Timed_semaphore *_sem =
-				reinterpret_cast<Genode::Timed_semaphore*>(sem->ptr);
+			Lwip::Semaphore *_sem =
+				reinterpret_cast<Lwip::Semaphore*>(sem->ptr);
 			if (_sem)
 				destroy(Genode::env()->heap(), _sem);
 		} catch (...) {
@@ -254,8 +268,8 @@ extern "C" {
 	void sys_sem_signal(sys_sem_t* sem)
 	{
 		try {
-			Genode::Timed_semaphore *_sem =
-				reinterpret_cast<Genode::Timed_semaphore*>(sem->ptr);
+			Lwip::Semaphore *_sem =
+				reinterpret_cast<Lwip::Semaphore*>(sem->ptr);
 			if (!_sem) {
 				//PERR("Invalid semaphore pointer at: %lx", *sem->ptr);
 				return;
@@ -277,8 +291,8 @@ extern "C" {
 	int sys_sem_valid(sys_sem_t* sem)
 	{
 		try {
-			Genode::Timed_semaphore *_sem =
-				reinterpret_cast<Genode::Timed_semaphore*>(sem->ptr);
+			Lwip::Semaphore *_sem =
+				reinterpret_cast<Lwip::Semaphore*>(sem->ptr);
 
 			if (_sem)
 				return 1;
@@ -312,7 +326,7 @@ extern "C" {
 	{
 		using namespace Genode;
 		try {
-			Timed_semaphore *_sem = reinterpret_cast<Timed_semaphore*>(sem->ptr);
+			Lwip::Semaphore *_sem = reinterpret_cast<Lwip::Semaphore*>(sem->ptr);
 			if (!_sem) {
 				//PERR("Invalid semaphore pointer at: %lx", *sem->ptr);
 				return EINVAL;
@@ -320,13 +334,13 @@ extern "C" {
 
 			/* If no timeout is requested, we have to track the time ourself */
 			if (!timeout) {
-				Alarm::Time starttime = Timeout_thread::alarm_timer()->time();
+				Alarm::Time starttime = Timeout_handler::alarm_timer()->time();
 				_sem->down();
-				return Timeout_thread::alarm_timer()->time() - starttime;
+				return Timeout_handler::alarm_timer()->time() - starttime;
 			} else {
 				return _sem->down(timeout);
 			}
-		} catch (Timeout_exception) {
+		} catch (Lwip::Timeout_exception) {
 			return SYS_ARCH_TIMEOUT;
 		} catch (...) {
 			PERR("Unknown Exception occured!");
@@ -518,9 +532,9 @@ extern "C" {
 				return EINVAL;
 			}
 			return _mbox->get(msg, timeout);
-		} catch (Genode::Timeout_exception) {
+		} catch (Lwip::Timeout_exception) {
 			return SYS_ARCH_TIMEOUT;
-		} catch (Genode::Nonblocking_exception) {
+		} catch (Lwip::Nonblocking_exception) {
 			return SYS_MBOX_EMPTY;
 		} catch (...) {
 			PERR("Unknown Exception occured!");
@@ -565,21 +579,21 @@ extern "C" {
 		{
 			LWIP_UNUSED_ARG(stacksize);
 			LWIP_UNUSED_ARG(prio);
-			Lwip_thread *_th = new (Genode::env()->heap())
-				Lwip_thread(name, thread, arg);
-			_th->start();
+			Lwip::Thread *_th = new (Genode::env()->heap())
+				Lwip::Thread(name, thread, arg);
+			_th->run();
 			return (sys_thread_t) _th;
 		} catch (Genode::Allocator::Out_of_memory) {
 			PWRN("Out of memory");
 			return 0;
 		} catch (...) {
 			PERR("Unknown Exception occured!");
-			return ERR_MEM;
 		}
+		return ERR_MEM;
 	}
 
 	u32_t sys_now() {
-		return Genode::Timeout_thread::alarm_timer()->time(); }
+		return Timeout_handler::alarm_timer()->time(); }
 
 #if 0
 	/**************
