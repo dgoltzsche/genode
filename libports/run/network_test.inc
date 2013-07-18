@@ -7,8 +7,8 @@
 #
 # Client parameters
 #
-set packet_payload_size 10
-set packet_count        1000000
+set packet_payload_size 1400
+set packet_count        892857
 
 #
 # Build
@@ -18,6 +18,7 @@ set build_components {
 	core init
 	drivers/timer drivers/nic
 	test/lwip/pingpong/server
+	drivers/platform
 }
 
 lappend_if $use_nic_bridge build_components server/nic_bridge
@@ -90,12 +91,16 @@ append config {
 	</start> }
 
 append_if [expr [have_spec omap4] || [have_spec exynos5]] config {
-	<start name="usb_drv" priority="-1">
+	<start name="platform_drv">
+		<resource name="RAM" quantum="4M"/>
+		<provides><service name="Regulator"/></provides>
+	</start>
+	<start name="usb_drv">
 		<resource name="RAM" quantum="12M"/>
 		<provides>
 			<service name="Nic"/>
 		</provides>
-		<config>
+		<config xhci="yes">
 			<nic mac="2e:60:90:0c:4e:02" />
 			<!--<nic mac="aa:bb:cc:dd:ee:00" />-->
 		</config>
@@ -141,6 +146,7 @@ install_config $config
 set boot_modules {
 	core init timer
 	ld.lib.so libc.lib.so lwip.lib.so libc_log.lib.so
+	platform_drv
 }
 
 lappend_if $use_nic_bridge boot_modules nic_bridge
