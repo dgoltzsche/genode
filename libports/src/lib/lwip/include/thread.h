@@ -43,39 +43,32 @@ class Lwip::Timeout_handler : public Genode::Alarm_scheduler
 		Timer::Connection                          _timer;
 		Genode::Signal_receiver                   &_receiver;
 		Genode::Signal_dispatcher<Timeout_handler> _dispatcher;
-		Genode::Alarm::Time _time;     /* current time    */
+		Genode::Alarm::Time                        _time;     /* current time    */
 
-		void _handle(unsigned)
+		void _handle(unsigned nr)
 		{
-			_time = _timer.elapsed_ms();
+			_time += nr * 10;
 
 			/* handle timouts of this point in time */
 			handle(_time);
-
-			/* schedule next timeout */
-			Genode::Alarm::Time n;
-			if (next_deadline(&n))
-				_timer.trigger_once((n-_time)*1000);
 		}
 
 	public:
 
 		Timeout_handler(Genode::Signal_receiver &recv)
 		: _receiver(recv),
-		  _dispatcher(recv, *this, &Timeout_handler::_handle) {
-			_timer.sigh(_dispatcher); }
+		  _dispatcher(recv, *this, &Timeout_handler::_handle),
+		  _time(0)
+		{
+			_timer.sigh(_dispatcher);
+			_timer.trigger_periodic(10000);
+		}
 
 		Genode::Alarm::Time time(void) { return _time; }
 
 		void schedule_ms(Genode::Alarm *alarm, Genode::Alarm::Time duration)
 		{
-			_time = _timer.elapsed_ms();
 			schedule_absolute(alarm, _time + duration);
-
-			/* if new alarm is earliest tin time, reprogram the timer */
-			Genode::Alarm::Time n;
-			if (next_deadline(&n) && n == (_time + duration))
-				_timer.trigger_once(duration*1000);
 		}
 
 		void wait_for_signals()
