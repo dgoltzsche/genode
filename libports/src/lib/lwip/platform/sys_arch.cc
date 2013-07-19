@@ -24,7 +24,6 @@
 #include <thread.h>
 #include <verbose.h>
 
-
 namespace Lwip {
 
 	class Mutex
@@ -44,6 +43,7 @@ namespace Lwip {
 
 
 Lwip::Thread* Lwip::Thread::_current = 0;
+Lwip::Thread* Lwip::Thread::_idle    = 0;
 
 
 extern Genode::Signal_receiver receiver;
@@ -137,6 +137,11 @@ extern "C" {
 	 */
 	void sys_init(void) {}
 
+
+	void lwip_schedule()
+	{
+		Thread::schedule();
+	}
 
 	void lwip_tcpip_init()
 	{

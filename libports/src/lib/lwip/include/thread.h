@@ -56,7 +56,6 @@ class Lwip::Timeout_handler : public Genode::Alarm_scheduler
 			Genode::Alarm::Time n;
 			if (next_deadline(&n))
 				_timer.trigger_once((n-_time)*1000);
-
 		}
 
 	public:
@@ -106,6 +105,7 @@ class Lwip::Thread : public Genode::List<Thread>::Element
 		char                _stack[STACK_SIZE]; /* stack */
 
 		static Thread      *_current;           /* currently scheduled object */
+		static Thread      *_idle;
 		static bool         _all;               /* true when all objects must be scheduled */
 
 		static const bool verbose = false;
@@ -149,15 +149,18 @@ class Lwip::Thread : public Genode::List<Thread>::Element
 
 		static Thread *_next()
 		{
-			/* return next element (wrap at the end) */
-			return _current && _current->next() ? _current->next()
-			                                    : _list()->first();
+			if (_current->next())
+				return _current->next();
+			return _list()->first() ? _list()->first()
+			                        : _idle;
 		}
 
-		static Thread *_main()
+		static void _handle_signal(void*)
 		{
-			static Thread main_thread;
-			return &main_thread;
+			while (true) {
+				Timeout_handler::alarm_timer()->wait_for_signals();
+				Thread::schedule();
+			}
 		}
 
 	public:
@@ -167,9 +170,6 @@ class Lwip::Thread : public Genode::List<Thread>::Element
 
 		static void schedule() __attribute__((noinline))
 		{
-			while (!_list()->first())
-				Timeout_handler::alarm_timer()->wait_for_signals();
-
 			if ((_next() == _current) || _setjmp(_current->_env))
 				return;
 
@@ -179,16 +179,33 @@ class Lwip::Thread : public Genode::List<Thread>::Element
 
 		static void initialize()
 		{
-			_current = _main();
-			_list()->insert(_current);
+			static Thread main_thread;
+			static Thread idle_thread("idle", Thread::_handle_signal, 0);
+			_list()->insert(&main_thread);
+			_idle    = &idle_thread;
+			_current = &main_thread;
 		}
 
 		static Thread *current() { return _current; }
+		const char    *name()    { return _name;    }
 
-		const char *name() { return _name; }
+		void run()
+		{
+			if (this == _idle)
+				PERR("idle thread should never be stopped nor run");
+			if (verbose)
+				PDBG("run %s (%p)", _name, _func);
+			_list()->insert(this);
+		}
 
-		void run()  { _list()->insert(this); }
-		void stop() { _list()->remove(this); }
+		void stop()
+		{
+			if (this == _idle)
+				PERR("idle thread should never be stopped nor run");
+			if (verbose)
+				PDBG("stop %s (%p)", _name, _func);
+			_list()->remove(this);
+		}
 };
 
 

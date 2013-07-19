@@ -42,6 +42,8 @@ void lwip_tcpip_init(void);
 int lwip_nic_init(genode_int32_t ip_addr,
                   genode_int32_t netmask, genode_int32_t gateway);
 
+void lwip_schedule();
+
 #ifdef __cplusplus
 }
 #endif

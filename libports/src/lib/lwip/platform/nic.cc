@@ -39,6 +39,7 @@ namespace Lwip {
 
 extern "C" {
 	static void genode_netif_input(struct netif *netif);
+	void lwip_schedule();
 }
 
 class Lwip::Nic
