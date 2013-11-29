@@ -42,7 +42,7 @@ append config {
 
 append_if [have_spec pci] config {
 	<start name="pci_drv">
-		<resource name="RAM" quantum="1M"/>
+		<resource name="RAM" quantum="2M"/>
 		<provides><service name="PCI"/></provides>
 	</start>}
 
@@ -76,17 +76,7 @@ mimetype.assign      = (
 					</dir>
 				</dir>
 				<dir name="website">
-					<inline name="index.html">
-<html>
-	<head>
-		<title>Hello</title>
-	</head>
-	<body>
-		<p>Hello Genode!</p>
-		<b>I am bold ;-)</b>
-	</body>
-</html>
-					</inline>
+					 <rom name="init" as="index.bin" />
 				</dir>
 			</content>
 		</config>
@@ -130,4 +120,11 @@ append_if [have_spec lan9118] qemu_args " -net nic,model=lan9118 "
 append qemu_args " -net user -redir tcp:5555::80 "
 append qemu_args " -nographic -serial mon:stdio "
 
-run_genode_until forever
+run_genode_until  {.*got IP address.*} 220
+set serial_id $spawn_id
+
+spawn wget http://localhost:5555/index.bin -O /dev/null
+set wget_id $spawn_id
+
+wait_for_output forever 0 $wget_id
+puts "\nTest succeeded"
