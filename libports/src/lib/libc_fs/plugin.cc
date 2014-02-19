@@ -598,9 +598,11 @@ class Plugin : public Libc::Plugin
 					do {
 						packet = source.get_acked_packet();
 						static_cast<Plugin_context *>(packet.ref())->in_flight = false;
-					} while (context(fd)->in_flight);
 
-					context(fd)->in_flight = false;
+						if (packet.operation() == File_system::Packet_descriptor::WRITE)
+							source.release_packet(packet);
+
+					} while (context(fd)->in_flight);
 
 					/*
 					 * XXX check if acked packet belongs to request,
