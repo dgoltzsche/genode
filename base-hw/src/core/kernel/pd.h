@@ -23,6 +23,7 @@
 #include <kernel/processor.h>
 #include <tlb.h>
 #include <assert.h>
+#include <slab_align.h>
 
 /* structure of the mode transition */
 extern int            _mt_begin;
@@ -187,15 +188,12 @@ class Kernel::Mode_transition_control
 		 *
 		 * \param tlb  translation buffer of the address space
 		 * \param ram  RAM donation for mapping (first try without)
-		 *
-		 * \return  RAM-donation size that is needed to do the mapping
 		 */
-		size_t map(Tlb * tlb, addr_t ram = 0)
+		void map(Tlb * tlb, Genode::Physical_slab_allocator *alloc)
 		{
 			addr_t const phys_base = (addr_t)&_mt_begin;
-			return tlb->insert_translation(VIRT_BASE, phys_base, SIZE_LOG2,
-			                               Page_flags::mode_transition(),
-			                               (void *)ram);
+			tlb->insert_translation(VIRT_BASE, phys_base, SIZE_LOG2,
+			                        Page_flags::mode_transition(), alloc);
 		}
 
 		/**
@@ -243,29 +241,7 @@ class Kernel::Pd : public Object<Pd, MAX_PDS, Pd_ids, pd_ids, pd_pool>
 		 * \param platform_pd  core object of the PD
 		 */
 		Pd(Tlb * const tlb, Platform_pd * const platform_pd)
-		:
-			_tlb(tlb), _platform_pd(platform_pd)
-		{
-			/* try to add translation for mode transition region */
-			unsigned const slog2 = mtc()->map(tlb);
-
-			/* extra ram needed to translate mode transition region */
-			if (slog2)
-			{
-				/* get size aligned extra ram */
-				addr_t const ram = (addr_t)&_extra_ram;
-				addr_t const ram_end = ram + sizeof(_extra_ram);
-				addr_t const aligned_ram = (ram_end - (1 << slog2)) &
-				                           ~((1 << slog2) - 1);
-				addr_t const aligned_ram_end = aligned_ram + (1 << slog2);
-
-				/* check attributes of aligned extra ram */
-				assert(aligned_ram >= ram && aligned_ram_end <= ram_end)
-
-				/* translate mode transition region globally */
-				mtc()->map(tlb, aligned_ram);
-			}
-		}
+		: _tlb(tlb), _platform_pd(platform_pd) { }
 
 		/**
 		 * Destructor

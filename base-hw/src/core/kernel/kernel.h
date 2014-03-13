@@ -14,6 +14,12 @@
 #ifndef _KERNEL__KERNEL_H_
 #define _KERNEL__KERNEL_H_
 
-namespace Kernel { unsigned core_id(); }
+#include <kernel/pd.h>
+
+namespace Kernel {
+	unsigned core_id();
+	Pd* core_pd();
+	Mode_transition_control* mtc();
+}
 
 #endif /* _KERNEL__KERNEL_H_ */

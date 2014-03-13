@@ -14,6 +14,7 @@
 /* Genode includes */
 #include <base/thread.h>
 #include <base/env.h>
+#include <base/sleep.h>
 
 /* base-hw includes */
 #include <kernel/interface.h>
@@ -64,6 +65,24 @@ void prepare_reinit_main_thread() { prepare_init_main_thread(); }
  ** Thread_base **
  *****************/
 
+extern Native_utcb*     main_thread_utcb();
+extern Platform_thread* create_platform_thread_core_hook(Thread_base::Context*);
+
+Native_utcb * Thread_base::utcb()
+{
+	if (this) { return &_context->utcb; }
+	return main_thread_utcb();
+}
+
+
+void Thread_base::_thread_start()
+{
+	Thread_base::myself()->_thread_bootstrap();
+	Thread_base::myself()->entry();
+	Thread_base::myself()->_join_lock.unlock();
+	Genode::sleep_forever();
+}
+
 void Thread_base::_thread_bootstrap()
 {
 	Native_utcb * const utcb = Thread_base::myself()->utcb();
@@ -73,16 +92,11 @@ void Thread_base::_thread_bootstrap()
 
 void Thread_base::_init_platform_thread(Type type)
 {
+	/* create platform thread */
+	_tid.platform_thread = create_platform_thread_core_hook(_context);
+
 	/* nothing platform specific to do if this is not a special thread */
-	if (type == NORMAL)
-	{
-		/* create server object */
-		char buf[48];
-		name(buf, sizeof(buf));
-		Cpu_session * cpu = env()->cpu_session();
-		_thread_cap = cpu->create_thread(buf, (addr_t)&_context->utcb);
-		return;
-	}
+	if (type == NORMAL) { return; }
 
 	/* if we got reinitialized we have to get rid of the old UTCB */
 	size_t const utcb_size = sizeof(Native_utcb);

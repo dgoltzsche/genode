@@ -50,20 +50,17 @@ void Rm_client::unmap(addr_t, addr_t virt_base, size_t size)
 		PWRN("failed to get platform thread of RM client");
 		return;
 	}
-	Tlb * const tlb = pt->tlb();
+	Tlb * const tlb = pt->pd()->tlb();
 	if (!tlb) {
 		PWRN("failed to get page table of RM client");
 		return;
 	}
-	tlb->remove_region(virt_base, size);
+	tlb->remove_region(virt_base, size,pt->pd()->page_slab());
 
 	/* update translation caches of all processors */
-	Update_pd_data data { pt->pd_id() };
+	Update_pd_data data { pt->pd()->id() };
 	Processor_broadcast_operation const operation(update_pd, &data);
 	processor_broadcast()->execute(&operation);
-
-	/* try to get back released memory from the translation table */
-	regain_ram_from_tlb(tlb);
 }
 
 
@@ -74,35 +71,22 @@ void Rm_client::unmap(addr_t, addr_t virt_base, size_t size)
 int Pager_activation_base::apply_mapping()
 {
 	/* prepare mapping */
-	Tlb * const tlb = (Tlb *)_fault.tlb;
+	Platform_pd * const pd = (Platform_pd*)_fault.pd;
+	Tlb * const tlb = pd->tlb();
+	Physical_slab_allocator * page_slab = pd->page_slab();
+
 	Page_flags const flags =
 	Page_flags::apply_mapping(_mapping.writable,
 	                          _mapping.write_combined,
 	                          _mapping.io_mem);
 
 	/* insert mapping into TLB */
-	unsigned sl2;
-	sl2 = tlb->insert_translation(_mapping.virt_address, _mapping.phys_address,
-	                              _mapping.size_log2, flags);
-	if (sl2)
-	{
-		/* try to get some natural aligned RAM */
-		void * ram;
-		bool ram_ok = platform()->ram_alloc()->alloc_aligned(1<<sl2, &ram,
-		                                                     sl2).is_ok();
-		if (!ram_ok) {
-			PWRN("failed to allocate additional RAM for TLB");
-			return -1;
-		}
-		/* try to translate again with extra RAM */
-		sl2 = tlb->insert_translation(_mapping.virt_address,
-		                              _mapping.phys_address,
-		                              _mapping.size_log2, flags, ram);
-		if (sl2) {
-			PWRN("TLB needs to much RAM");
-			regain_ram_from_tlb(tlb);
-			return -1;
-		}
+	try {
+		tlb->insert_translation(_mapping.virt_address, _mapping.phys_address,
+		                        _mapping.size_log2, flags, page_slab);
+	} catch(Allocator::Out_of_memory) {
+		PERR("TLB needs to much RAM");
+		return -1;
 	}
 	return 0;
 }

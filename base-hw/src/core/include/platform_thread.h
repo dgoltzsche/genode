@@ -33,6 +33,7 @@ namespace Genode {
 	class Thread_state;
 	class Rm_client;
 	class Platform_thread;
+	class Platform_pd;
 
 	/**
 	 * Userland interface for the management of kernel thread-objects
@@ -41,14 +42,12 @@ namespace Genode {
 	{
 		enum { LABEL_MAX_LEN = 32 };
 
-		size_t                   _stack_size;
-		unsigned                 _pd_id;
+		Platform_pd *            _pd;
 		Weak_ptr<Address_space>  _address_space;
 		unsigned                 _id;
 		Rm_client *              _rm_client;
-		Native_utcb *            _utcb_phys;
-		Native_utcb *            _utcb_virt;
-		Tlb *                    _tlb;
+		Native_utcb *            _utcb_core_addr;
+		Native_utcb *            _utcb_pd_addr;
 		Ram_dataspace_capability _utcb;
 		char                     _label[LABEL_MAX_LEN];
 		char                     _kernel_thread[sizeof(Kernel::Thread)];
@@ -80,12 +79,10 @@ namespace Genode {
 			/**
 			 * Constructor for core threads
 			 *
-			 * \param stack_size  initial size of the stack
-			 * \param pd_id       kernel name of targeted protection domain
 			 * \param label       debugging label
+			 * \param utcb        virtual address of UTCB within core
 			 */
-			Platform_thread(size_t const stack_size,
-			                unsigned const pd_id, const char * const label);
+			Platform_thread(const char * const label, Native_utcb * utcb);
 
 			/**
 			 * Constructor for threads outside of core
@@ -105,14 +102,14 @@ namespace Genode {
 			/**
 			 * Join a protection domain
 			 *
-			 * \param pd_id          kernel name of targeted protection domain
+			 * \param pd             platform pd object pointer
 			 * \param main_thread    wether thread is the first in protection domain
 			 * \param address_space  corresponding Genode address space
 			 *
 			 * \retval  0  succeeded
 			 * \retval -1  failed
 			 */
-			int join_pd(unsigned const pd_id, bool const main_thread,
+			int join_pd(Platform_pd *  const pd, bool const main_thread,
 			            Weak_ptr<Address_space> address_space);
 
 			/**
@@ -179,17 +176,11 @@ namespace Genode {
 
 			Pager_object * pager();
 
-			unsigned pd_id() const { return _pd_id; }
+			Platform_pd * pd() const { return _pd; }
 
 			Native_thread_id id() const { return _id; }
 
-			size_t stack_size() const { return _stack_size; }
-
-			Native_utcb * utcb_virt() const { return _utcb_virt; }
-
 			Ram_dataspace_capability utcb() const { return _utcb; }
-
-			Tlb * tlb() const { return _tlb; }
 	};
 }
 

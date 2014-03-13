@@ -89,12 +89,12 @@ class Arm_v7::Section_table : public Arm::Section_table
 		 *
 		 * For details see 'Base::insert_translation'
 		 */
-		size_t insert_translation(addr_t const vo, addr_t const pa,
+		void insert_translation(addr_t const vo, addr_t const pa,
 		                          size_t const size_log2,
 		                          Page_flags const & flags,
-		                          void * const p = 0)
+		                          Physical_slab_allocator * slab)
 		{
-			return Base::insert_translation(vo, pa, size_log2, flags, this, p);
+			Base::insert_translation(vo, pa, size_log2, flags, this, slab);
 		}
 
 		/**

@@ -21,14 +21,7 @@
 #include <util.h>
 
 namespace Genode {
-	struct Mapped_allocator;
 	class  Core_mem_allocator;
-};
-
-
-struct Genode::Mapped_allocator
-{
-	virtual void * map_addr(void * addr) = 0;
 };
 
 
@@ -50,8 +43,7 @@ class Genode::Core_mem_allocator : public Genode::Range_allocator
 		struct Md { void * map_addr; };
 
 		class Mapped_avl_allocator
-		: public Mapped_allocator,
-		  public Allocator_avl_tpl<Md, get_page_size()>
+		: public Allocator_avl_tpl<Md, get_page_size()>
 		{
 			public:
 
@@ -116,6 +108,11 @@ class Genode::Core_mem_allocator : public Genode::Range_allocator
 		 * Access core's virtual-memory allocator
 		 */
 		Synchronized_mapped_allocator *virt_alloc() { return &_virt_alloc; }
+
+		void * phys_addr(void * addr) {
+			return _virt_alloc.raw()->map_addr(addr); }
+		void * virt_addr(void * addr) {
+			return _phys_alloc.raw()->map_addr(addr); }
 
 
 		/*******************************

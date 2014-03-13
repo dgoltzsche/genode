@@ -242,11 +242,10 @@ char const * Kernel::Thread::pd_label() const
 
 void Thread::_call_new_pd()
 {
-	/* create translation lookaside buffer and protection domain */
-	void * p = (void *)user_arg_1();
-	Tlb * const tlb = new (p) Tlb();
-	p = (void *)((addr_t)p + sizeof(Tlb));
-	Pd * const pd = new (p) Pd(tlb, (Platform_pd *)user_arg_2());
+	/* create protection domain */
+	void        * p   = (void *) user_arg_1();
+	Platform_pd * ppd = (Platform_pd *) user_arg_2();
+	Pd * const pd     = new (p) Pd((Tlb*) ppd->tlb_phys_addr(), ppd);
 	user_arg_0(pd->id());
 }
 

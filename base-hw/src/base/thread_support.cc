@@ -21,26 +21,19 @@ using namespace Genode;
 
 namespace Genode { Rm_session * env_context_area_rm_session(); }
 
+/**
+ * Return virtual UTCB location of main threads
+ */
+Native_utcb * main_thread_utcb() {
+	return (Native_utcb *)UTCB_ALIGNED; }
+
+Platform_thread* create_platform_thread_core_hook(Thread_base::Context*) {
+	return 0; }
+
 
 /*****************
  ** Thread_base **
  *****************/
-
-Native_utcb * Thread_base::utcb()
-{
-	if (this) { return &_context->utcb; }
-	return main_thread_utcb();
-}
-
-
-void Thread_base::_thread_start()
-{
-	Thread_base::myself()->_thread_bootstrap();
-	Thread_base::myself()->entry();
-	Thread_base::myself()->_join_lock.unlock();
-	Genode::sleep_forever();
-}
-
 
 void Thread_base::_deinit_platform_thread()
 {
@@ -61,6 +54,12 @@ void Thread_base::_deinit_platform_thread()
 
 void Thread_base::start()
 {
+	/* create server object */
+	char buf[48];
+	name(buf, sizeof(buf));
+	Cpu_session * cpu = env()->cpu_session();
+	_thread_cap = cpu->create_thread(buf, (addr_t)&_context->utcb);
+
 	/* assign thread to protection domain */
 	env()->pd_session()->bind_thread(_thread_cap);
 

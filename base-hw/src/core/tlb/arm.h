@@ -19,8 +19,9 @@
 #include <base/printf.h>
 
 /* base-hw includes */
-#include <placement_new.h>
+#include <assert.h>
 #include <tlb/page_flags.h>
+#include <slab_align.h>
 
 namespace Arm
 {
@@ -227,15 +228,10 @@ namespace Arm
 			Page_table()
 			{
 				/* check table alignment */
-				if (!aligned((addr_t)this, ALIGNM_LOG2) ||
-				    (addr_t)this != (addr_t)_entries)
-				{
-					PDBG("Insufficient table alignment");
-					while (1) ;
-				}
+				assert(aligned((addr_t)this, ALIGNM_LOG2));
+
 				/* start with an empty table */
-				for (unsigned i = 0; i <= MAX_INDEX; i++)
-					Descriptor::invalidate(_entries[i]);
+				memset(&_entries, 0, sizeof(_entries));
 			}
 
 			/**
@@ -268,37 +264,11 @@ namespace Arm
 			{
 				/* validate virtual address */
 				unsigned i;
-				if (_index_by_vo (i, vo)) {
-					PDBG("Invalid virtual offset");
-					while (1) ;
-				}
-				/* select descriptor type by the translation size */
-				if (size_log2 == Small_page::VIRT_SIZE_LOG2)
-				{
-					/* compose new descriptor value */
-					Descriptor::access_t const entry =
-						Small_page::create(flags, pa);
+				assert(!_index_by_vo(i, vo));
+				assert(size_log2 == Small_page::VIRT_SIZE_LOG2);
 
-					/* check if we can we write to the targeted entry */
-					if (Descriptor::valid(_entries[i]))
-					{
-						/*
-						 * It's possible that multiple threads fault at the
-						 * same time on the same translation, thus we need
-						 * this check.
-						 */
-						if (_entries[i] == entry) return;
-
-						/* never modify existing translations */
-						PDBG("Couldn't override entry");
-						while (1) ;
-					}
-					/* override table entry with new descriptor value */
-					_entries[i] = entry;
-					return;
-				}
-				PDBG("Translation size not supported");
-				while (1) ;
+				/* compose new descriptor value */
+				_entries[i] = Small_page::create(flags, pa);
 			}
 
 			/**
@@ -341,9 +311,8 @@ namespace Arm
 			 */
 			bool empty()
 			{
-				for (unsigned i = 0; i <= MAX_INDEX; i++) {
+				for (unsigned i = 0; i <= MAX_INDEX; i++)
 					if (Descriptor::valid(_entries[i])) return false;
-				}
 				return true;
 			}
 
@@ -564,15 +533,10 @@ namespace Arm
 			Section_table()
 			{
 				/* check for appropriate positioning of the table */
-				if (!aligned((addr_t)this, ALIGNM_LOG2)
-				    || (addr_t)this != (addr_t)_entries)
-				{
-					PDBG("Insufficient table alignment");
-					while (1) ;
-				}
+				assert(aligned((addr_t)this, ALIGNM_LOG2));
+
 				/* start with an empty table */
-				for (unsigned i = 0; i <= MAX_INDEX; i++)
-					Descriptor::invalidate(_entries[i]);
+				memset(&_entries, 0, sizeof(_entries));
 			}
 
 			/**
@@ -616,76 +580,57 @@ namespace Arm
 			 * table level.
 			 */
 			template <typename ST>
-			size_t insert_translation(addr_t const vo, addr_t const pa,
-			                          size_t const size_log2,
-			                          Page_flags const & flags,
-			                          ST * const st,
-			                          void * const extra_space = 0)
+			void insert_translation(addr_t const vo, addr_t const pa,
+			                        size_t const size_log2,
+			                        Page_flags const & flags,
+			                        ST * const st,
+			                        Physical_slab_allocator * slab)
 			{
 				typedef typename ST::Section Section;
 				typedef typename ST::Page_table_descriptor Page_table_descriptor;
 
-				/* validate virtual address */
+				/* sanity checks */
 				unsigned i;
-				if (_index_by_vo (i, vo)) {
-					PDBG("Invalid virtual offset");
-					while (1) ;
-				}
+				assert(!_index_by_vo (i, vo));
+				assert(size_log2 <= Section::VIRT_SIZE_LOG2);
+
 				/* select descriptor type by translation size */
-				if (size_log2 < Section::VIRT_SIZE_LOG2)
-				{
-					/* check if an appropriate page table already exists */
-					Page_table * pt;
-					if (Descriptor::type(_entries[i]) == Descriptor::PAGE_TABLE) {
-						pt = (Page_table *)(addr_t)
-							Page_table_descriptor::Pa_31_10::masked(_entries[i]);
-					}
-					/* check if we have enough memory for the page table */
-					else if (extra_space)
-					{
-						/* check if we can write to the targeted entry */
-						if (Descriptor::valid(_entries[i])) {
-							PDBG ("Couldn't override entry");
-							while (1) ;
+				if (size_log2 < Section::VIRT_SIZE_LOG2) {
+					Page_table * pt = 0;
+					switch (Descriptor::type(_entries[i])) {
+
+					case Descriptor::FAULT:
+						{
+							if (!slab) throw Allocator::Out_of_memory();
+
+							/* create and link page table */
+							pt = new (slab) Page_table();
+							Page_table * pt_phys = (Page_table*) slab->phys_addr(pt);
+							pt_phys = pt_phys ? pt_phys : pt; /* hack for core */
+							_entries[i] = Page_table_descriptor::create(pt_phys, st);
+							break;
 						}
-						/* create and link page table */
-						pt = new (extra_space) Page_table();
-						_entries[i] = Page_table_descriptor::create(pt, st);
-					}
-					/* request additional memory to create a page table */
-					else return Page_table::SIZE_LOG2;
+
+					case Descriptor::PAGE_TABLE:
+						{
+							void * pt_phys = (void*)
+								Page_table_descriptor::Pa_31_10::masked(_entries[i]);
+							pt = (Page_table *) slab->virt_addr(pt_phys);
+							pt = pt ? pt : (Page_table *)pt_phys ; /* hack for core */
+							break;
+						}
+
+					default:
+						PERR("insert vo=%lx pa=%lx size=%zx into section impossible",
+						     vo, pa, 1 << size_log2);
+						assert(false);
+					};
 
 					/* insert translation */
 					pt->insert_translation(vo - Section::Pa_31_20::masked(vo),
 					                       pa, size_log2, flags);
-					return 0;
-				}
-				if (size_log2 == Section::VIRT_SIZE_LOG2)
-				{
-					/* compose section descriptor */
-					Descriptor::access_t const entry =
-						Section::create(flags, pa, st);
-
-					/* check if we can we write to the targeted entry */
-					if (Descriptor::valid(_entries[i]))
-					{
-						/*
-						 * It's possible that multiple threads fault at the
-						 * same time on the same translation, thus we need
-						 * this check.
-						 */
-						if (_entries[i] == entry) return 0;
-
-						/* never modify existing translations */
-						PDBG("Couldn't override entry");
-						while (1) ;
-					}
-					/* override the table entry */
-					_entries[i] = entry;
-					return 0;
-				}
-				PDBG("Translation size not supported");
-				while (1) ;
+				} else
+					_entries[i] = Section::create(flags, pa, st);
 			}
 
 			/**
@@ -694,7 +639,8 @@ namespace Arm
 			 * \param vo    region offset within the tables virtual region
 			 * \param size  region size
 			 */
-			void remove_region(addr_t vo, size_t const size)
+			void remove_region(addr_t vo, size_t const size,
+			                   Physical_slab_allocator * slab)
 			{
 				addr_t const ve = vo + size;
 				unsigned i;
@@ -716,10 +662,15 @@ namespace Arm
 						typedef Page_table_descriptor Ptd;
 						typedef Page_table            Pt;
 
-						vo &= Pt::VIRT_BASE_MASK;
-						Pt * const pt = (Pt *)Ptd::Pa_31_10::masked(_entries[i]);
+						Pt * pt_phys = (Pt *) Ptd::Pa_31_10::masked(_entries[i]);
+						Pt * pt      = (Pt *) slab->virt_addr(pt_phys);
+						pt = pt ? pt : pt_phys; // TODO hack
 						addr_t const pt_vo = vo - Section::Pa_31_20::masked(vo);
 						pt->remove_region(pt_vo, ve - vo);
+						if (pt->empty()) {
+							Descriptor::invalidate(_entries[i]);
+							destroy(slab, pt);
+						}
 						next_vo = vo + Pt::VIRT_SIZE;
 						break; }
 
@@ -739,37 +690,6 @@ namespace Arm
 			 * Get base address for hardware table walk
 			 */
 			addr_t base() const { return (addr_t)_entries; }
-
-			/**
-			 * Get a portion of memory that is no longer used by this table
-			 *
-			 * \param base  base of regained mem portion if method returns 1
-			 * \param s     size of regained mem portion if method returns 1
-			 *
-			 * \retval 1  successfully regained memory
-			 * \retval 0  no more memory to regain
-			 */
-			bool regain_memory (void * & base, size_t & s)
-			{
-				/* walk through all entries */
-				for (unsigned i = 0; i <= MAX_INDEX; i++)
-				{
-					if (Descriptor::type(_entries[i]) == Descriptor::PAGE_TABLE)
-					{
-						Page_table * const pt = (Page_table *)
-						(addr_t)Page_table_descriptor::Pa_31_10::masked(_entries[i]);
-						if (pt->empty())
-						{
-							/* we've found an useless page table */
-							Descriptor::invalidate(_entries[i]);
-							base = (void *)pt;
-							s = sizeof(Page_table);
-							return true;
-						}
-					}
-				}
-				return false;
-			}
 
 			/**
 			 * Get next translation size log2 by area constraints
@@ -805,7 +725,9 @@ namespace Arm
 				while (1)
 				{
 					/* map current offset without displacement */
-					if(st->insert_translation(vo, vo, tsl2, flags)) {
+					try {
+						st->insert_translation(vo, vo, tsl2, flags, 0);
+					} catch(Allocator::Out_of_memory) {
 						PDBG("Displacement not permitted");
 						return;
 					}

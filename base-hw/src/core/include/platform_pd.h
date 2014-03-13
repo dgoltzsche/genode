@@ -23,21 +23,11 @@
 #include <platform.h>
 #include <platform_thread.h>
 #include <address_space.h>
+#include <slab_align.h>
+#include <kernel/kernel.h>
 
 namespace Genode
 {
-	/**
-	 * Regain all administrative memory that isn't used anymore by 'tlb'
-	 */
-	inline void regain_ram_from_tlb(Tlb * tlb)
-	{
-		size_t s;
-		void * base;
-		while (tlb->regain_memory(base, s)) {
-			platform()->ram_alloc()->free(base, s);
-		}
-	}
-
 	class Platform_thread;
 
 	/**
@@ -45,36 +35,48 @@ namespace Genode
 	 */
 	class Platform_pd : public Address_space
 	{
-		unsigned           _id;
-		Native_capability  _parent;
-		Native_thread_id   _main_thread;
-		char const * const _label;
-		Tlb *              _tlb;
+		protected:
+
+			unsigned                  _id;
+			Native_capability         _parent;
+			Native_thread_id          _main_thread;
+			char const * const        _label;
+			Tlb                     * _tlb;
+			uint8_t                   _kernel_pd[sizeof(Kernel::Pd)];
+			Physical_slab_allocator * _pslab;
 
 		public:
 
 			/**
-			 * Constructor
+			 * Constructor for core pd
+			 */
+			Platform_pd(Tlb * tlb, Physical_slab_allocator * slab)
+			: _main_thread(0), _label("core"), _tlb(tlb), _pslab(slab) { }
+
+			/**
+			 * Constructor for non-core pd
 			 */
 			Platform_pd(char const *label) : _main_thread(0), _label(label)
 			{
+				Core_mem_allocator * cma =
+					static_cast<Core_mem_allocator*>(platform()->core_mem_alloc());
+
 				/* get some aligned space for the kernel object */
-				void * kernel_pd = 0;
-				Range_allocator * ram = platform()->ram_alloc();
-				bool kernel_pd_ok =
-					ram->alloc_aligned(Kernel::pd_size(), &kernel_pd,
-					                   Kernel::pd_alignment_log2()).is_ok();
-				if (!kernel_pd_ok) {
+				if (!cma->alloc_aligned(sizeof(Tlb), (void**)&_tlb,
+				                        Tlb::ALIGNM_LOG2).is_ok()) {
 					PERR("failed to allocate kernel object");
 					throw Root::Quota_exceeded();
 				}
+
+				_pslab = new (cma) Aligned_slab<1<<10, 32, 10>(cma);
+				Kernel::mtc()->map(_tlb, _pslab);
+
 				/* create kernel object */
-				_id = Kernel::new_pd(kernel_pd, this);
+				_id = Kernel::new_pd(&_kernel_pd, this);
 				if (!_id) {
 					PERR("failed to create kernel object");
 					throw Root::Unavailable();
 				}
-				_tlb = (Tlb *)kernel_pd;
 			}
 
 			/**
@@ -95,9 +97,9 @@ namespace Genode
 				{
 					/* annotate that we've got a main thread from now on */
 					_main_thread = t->id();
-					return t->join_pd(_id, 1, Address_space::weak_ptr());
+					return t->join_pd(this, 1, Address_space::weak_ptr());
 				}
-				return t->join_pd(_id, 0, Address_space::weak_ptr());
+				return t->join_pd(this, 0, Address_space::weak_ptr());
 			}
 
 			/**
@@ -118,7 +120,18 @@ namespace Genode
 			 ** Accessors **
 			 ***************/
 
-			char const * const label() { return _label; }
+			unsigned const            id()        { return _id; }
+			char const * const        label()     { return _label; }
+			Tlb *                     tlb()       { return _tlb; }
+			Physical_slab_allocator * page_slab() { return _pslab; };
+			void page_slab(Physical_slab_allocator *pslab) { _pslab = pslab; };
+
+			void * tlb_phys_addr() const
+			{
+				Core_mem_allocator * cma =
+					static_cast<Core_mem_allocator*>(platform()->core_mem_alloc());
+				return cma->phys_addr(_tlb);
+			}
 
 
 			/*****************************

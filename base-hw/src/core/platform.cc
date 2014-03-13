@@ -1,6 +1,7 @@
 /*
  * \brief   Platform implementation specific for hw
  * \author  Martin Stein
+ * \author  Stefan Kalkowski
  * \date    2011-12-21
  */
 
@@ -18,9 +19,13 @@
 
 /* core includes */
 #include <core_parent.h>
+#include <slab_align.h>
+#include <map_local.h>
 #include <platform.h>
-#include <pic.h>
+#include <platform_pd.h>
 #include <util.h>
+#include <kernel/kernel.h>
+#include <tlb.h>
 
 using namespace Genode;
 
@@ -86,12 +91,6 @@ Native_region * Platform::_core_only_ram_regions(unsigned const i)
 {
 	static Native_region _r[] =
 	{
-		/* avoid null pointers */
-		{ 0, 1 },
-
-		/* mode transition region */
-		{ Kernel::mode_transition_base(), Kernel::mode_transition_size() },
-
 		/* core image */
 		{ (addr_t)&_prog_img_beg,
 		  (size_t)((addr_t)&_prog_img_end - (addr_t)&_prog_img_beg) },
@@ -103,22 +102,33 @@ Native_region * Platform::_core_only_ram_regions(unsigned const i)
 	return i < sizeof(_r)/sizeof(_r[0]) ? &_r[i] : 0;
 }
 
+static Native_region * virt_region(unsigned const i) {
+	static Native_region r = { VIRT_ADDR_SPACE_START, VIRT_ADDR_SPACE_SIZE };
+	return i ? 0 : &r; }
+
 
 Platform::Platform()
 :
-	_core_mem_alloc(0),
-	_io_mem_alloc(core_mem_alloc()), _io_port_alloc(core_mem_alloc()),
+	_io_mem_alloc(core_mem_alloc()),
 	_irq_alloc(core_mem_alloc()),
 	_vm_start(VIRT_ADDR_SPACE_START), _vm_size(VIRT_ADDR_SPACE_SIZE)
 {
+	static Aligned_slab<1<<10, 32, 10> pslab(&_core_mem_alloc);
+	Kernel::core_pd()->platform_pd()->page_slab(static_cast<Physical_slab_allocator*>(&pslab));
+
 	/*
 	 * Initialise platform resource allocators.
 	 * Core mem alloc must come first because it is
 	 * used by the other allocators.
 	 */
-	enum { VERBOSE = 0 };
+	enum { VERBOSE = 1 };
 	unsigned const psl2 = get_page_size_log2();
-	init_alloc(&_core_mem_alloc, _ram_regions, _core_only_ram_regions, psl2);
+	init_alloc(_core_mem_alloc.phys_alloc(), _ram_regions,
+	           _core_only_ram_regions, psl2);
+	init_alloc(_core_mem_alloc.virt_alloc(), virt_region,
+	           _core_only_ram_regions, psl2);
+
+	//TODO replace with new core tlb
 
 	/* make interrupts available to the interrupt allocator */
 	for (unsigned i = 0; i < Kernel::Pic::MAX_INTERRUPT_ID; i++)
@@ -139,11 +149,16 @@ Platform::Platform()
 			Rom_module(header->base, header->size, (const char*)header->name);
 		_rom_fs.insert(rom_module);
 	}
+
 	/* print ressource summary */
 	if (VERBOSE) {
-		printf("Core memory allocator\n");
+		printf("Core virtual memory allocator\n");
 		printf("---------------------\n");
-		_core_mem_alloc.raw()->dump_addr_tree();
+		_core_mem_alloc.virt_alloc()->raw()->dump_addr_tree();
+		printf("\n");
+		printf("RAM memory allocator\n");
+		printf("---------------------\n");
+		_core_mem_alloc.phys_alloc()->raw()->dump_addr_tree();
 		printf("\n");
 		printf("IO memory allocator\n");
 		printf("-------------------\n");
@@ -171,3 +186,50 @@ void Core_parent::exit(int exit_value)
 	while (1) ;
 }
 
+
+/****************************************
+ ** Support for core memory management **
+ ****************************************/
+
+bool Genode::map_local(addr_t from_phys, addr_t to_virt, size_t num_pages)
+{
+	/* insert mapping into core's TLB */
+	Tlb *tlb = Kernel::core_pd()->tlb();
+	const Page_flags flags = Page_flags::map_core_area(false);
+
+	try {
+		for (size_t i = 0; i < num_pages; i++) {
+			tlb->insert_translation(to_virt, from_phys, get_page_size_log2(),
+			                        flags, Kernel::core_pd()->platform_pd()->page_slab());
+			from_phys += get_page_size();
+			to_virt   += get_page_size();
+		}
+	} catch(Allocator::Out_of_memory) {
+		PERR("TLB needs to much RAM");
+		return false;
+	}
+	return true;
+}
+
+
+bool Genode::unmap_local(addr_t virt_addr, size_t num_pages)
+{
+	Tlb *tlb = Kernel::core_pd()->tlb();
+	tlb->remove_region(virt_addr, num_pages * get_page_size(),
+	                   Kernel::core_pd()->platform_pd()->page_slab());
+
+	/* make the new DS-content visible to other PDs */
+	Kernel::update_region(virt_addr, num_pages * get_page_size());
+	return true;
+}
+
+
+bool Core_mem_allocator::_map_local(addr_t   virt_addr,
+                                    addr_t   phys_addr,
+                                    unsigned size) {
+	return map_local(phys_addr, virt_addr, size / get_page_size()); }
+
+
+bool Core_mem_allocator::_unmap_local(addr_t   virt_addr,
+                                      unsigned size) {
+	return unmap_local(virt_addr, size / get_page_size()); }

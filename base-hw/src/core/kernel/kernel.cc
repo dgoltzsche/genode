@@ -1,6 +1,7 @@
 /*
  * \brief  Singlethreaded minimalistic kernel
  * \author Martin Stein
+ * \author Stefan Kalkowski
  * \date   2011-10-20
  *
  * This kernel is the only code except the mode transition PIC, that runs in
@@ -29,19 +30,23 @@
 #include <trustzone.h>
 #include <timer.h>
 #include <pic.h>
+#include <map_local.h>
 
 /* base includes */
+#include <base/allocator_avl.h>
 #include <unmanaged_singleton.h>
+#include <base/native_types.h>
 
 /* base-hw includes */
 #include <kernel/irq.h>
 #include <kernel/perf_counter.h>
-
 using namespace Kernel;
 
 extern Genode::Native_thread_id _main_thread_id;
 extern "C" void CORE_MAIN();
 extern void * _start_secondary_processors;
+extern int _prog_img_beg;
+extern int _prog_img_end;
 
 Genode::Native_utcb * _main_thread_utcb;
 
@@ -94,31 +99,55 @@ namespace Kernel
 	 */
 	Pd * core()
 	{
-		/**
-		 * Core protection-domain
-		 */
-		class Core_pd : public Pd
-		{
-			public:
+		constexpr int tlb_align  = 1 << Core_tlb::ALIGNM_LOG2;
 
-				/**
-				 * Constructor
-				 */
-				Core_pd(Tlb * const tlb, Platform_pd * const platform_pd)
-				:
-					Pd(tlb, platform_pd)
-				{ }
+		struct Simple_allocator : Genode::Allocator_avl
+		{
+			Simple_allocator() : Genode::Allocator_avl(0) { }
+
+			void * phys_addr(void * addr) { return addr; }
+			void * virt_addr(void * addr) { return addr; }
 		};
-		constexpr int tlb_align = 1 << Core_tlb::ALIGNM_LOG2;
-		Core_tlb * core_tlb = unmanaged_singleton<Core_tlb, tlb_align>();
-		Core_pd  * core_pd  = unmanaged_singleton<Core_pd>(core_tlb, nullptr);
-		return core_pd;
+
+		using Page_slab =
+			Genode::Aligned_slab<1<<10, 32, 10, Simple_allocator>;
+
+		struct Core_pd : Platform_pd, Pd
+		{
+			Core_pd(Tlb * tlb, Page_slab * slab)
+			: Platform_pd(tlb, slab),
+			  Pd(tlb, this)
+			{
+				using namespace Genode;
+
+				Platform_pd::_id = Pd::id();
+
+				/* map exception vector for core */
+				Kernel::mtc()->map(tlb, slab);
+
+				/* map core's program image */
+				addr_t start = trunc_page((addr_t)&_prog_img_beg);
+				addr_t end   = round_page((addr_t)&_prog_img_end);
+				map_local(start, start, (end-start) / get_page_size());
+
+				/* map core's mmio regions */
+				Native_region * r = Platform::_core_only_mmio_regions(0);
+				for (unsigned i = 0; r; r = Platform::_core_only_mmio_regions(++i))
+					map_local(r->base, r->base, r->size / get_page_size());
+			}
+		};
+
+		Simple_allocator * sa   = unmanaged_singleton<Simple_allocator>();
+		Tlb              * tlb  = unmanaged_singleton<Tlb, tlb_align>();
+		Page_slab        * slab = unmanaged_singleton<Page_slab, tlb_align>(sa);
+		return unmanaged_singleton<Core_pd>(tlb, slab);
 	}
 
 	/**
 	 * Get core attributes
 	 */
 	unsigned core_id() { return core()->id(); }
+	Pd*      core_pd() { return core();       }
 }
 
 
