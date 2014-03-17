@@ -58,5 +58,8 @@ Core_mem_allocator::alloc_aligned(size_t size, void **out_addr, int align)
 	/* make physical page accessible at the designated virtual address */
 	_map_local((addr_t)*out_addr, (addr_t)phys_addr, page_rounded_size);
 
+	_phys_alloc.raw()->metadata(phys_addr, { *out_addr });
+	_virt_alloc.raw()->metadata(*out_addr, { phys_addr });
+
 	return Alloc_return::OK;
 }
