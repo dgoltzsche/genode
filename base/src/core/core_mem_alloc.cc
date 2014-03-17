@@ -30,8 +30,6 @@ Core_mem_allocator::alloc_aligned(size_t size, void **out_addr, int align)
 	void  *phys_addr = 0;
 	align = max((size_t)align, get_page_size_log2());
 
-	PINF("%zx %zx %zd", size, page_rounded_size, log2(page_rounded_size));
-
 	/* allocate physical pages */
 	Alloc_return ret1 = _phys_alloc.raw()->alloc_aligned(page_rounded_size,
 	                                                     &phys_addr, align);
