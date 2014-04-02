@@ -1,6 +1,7 @@
 /*
  * \brief   TLB driver for core
  * \author  Martin Stein
+ * \author  Stefan Kalkowski
  * \date    2012-02-22
  */
 
@@ -66,28 +67,20 @@ namespace Arm
 	static typename T::access_t
 	memory_region_attr(Page_flags const & flags);
 
+	class Double_insertion {};
+
 	/**
 	 * Second level translation table
 	 */
 	class Page_table
 	{
-		enum {
-			_1KB_LOG2 = 10,
-			_4KB_LOG2 = 12,
-			_64KB_LOG2 = 16,
-			_1MB_LOG2 = 20,
-		};
-
 		public:
 
 			enum {
-				SIZE_LOG2 = _1KB_LOG2,
-				SIZE = 1 << SIZE_LOG2,
+				_1KB_LOG2   = 10,
+				SIZE_LOG2   = _1KB_LOG2,
+				SIZE        = 1 << SIZE_LOG2,
 				ALIGNM_LOG2 = SIZE_LOG2,
-
-				VIRT_SIZE_LOG2 = _1MB_LOG2,
-				VIRT_SIZE = 1 << VIRT_SIZE_LOG2,
-				VIRT_BASE_MASK = ~((1 << VIRT_SIZE_LOG2) - 1),
 			};
 
 		protected:
@@ -101,6 +94,14 @@ namespace Arm
 				 * Descriptor types
 				 */
 				enum Type { FAULT, SMALL_PAGE };
+
+				enum {
+					_4KB_LOG2        = 12,
+					VIRT_SIZE_LOG2   = _4KB_LOG2,
+					VIRT_SIZE        = 1 << VIRT_SIZE_LOG2,
+					VIRT_OFFSET_MASK = (1 << VIRT_SIZE_LOG2) - 1,
+					VIRT_BASE_MASK   = ~(VIRT_OFFSET_MASK),
+				};
 
 				struct Type_0 : Bitfield<0, 2> { };
 				struct Type_1 : Bitfield<1, 1> { };
@@ -144,29 +145,10 @@ namespace Arm
 			};
 
 			/**
-			 * Represents an untranslated virtual region
-			 */
-			struct Fault : Descriptor
-			{
-				enum {
-					VIRT_SIZE_LOG2 = _4KB_LOG2,
-					VIRT_SIZE = 1 << VIRT_SIZE_LOG2,
-					VIRT_BASE_MASK = ~((1 << VIRT_SIZE_LOG2) - 1)
-				};
-			};
-
-			/**
 			 * Small page descriptor structure
 			 */
 			struct Small_page : Descriptor
 			{
-				enum {
-					VIRT_SIZE_LOG2   = _4KB_LOG2,
-					VIRT_SIZE        = 1 << VIRT_SIZE_LOG2,
-					VIRT_OFFSET_MASK = (1 << VIRT_SIZE_LOG2) - 1,
-					VIRT_BASE_MASK   = ~(VIRT_OFFSET_MASK),
-				};
-
 				struct Xn       : Bitfield<0, 1> { };   /* execute never */
 				struct B        : Bitfield<2, 1> { };   /* mem region attr. */
 				struct C        : Bitfield<3, 1> { };   /* mem region attr. */
@@ -213,11 +195,11 @@ namespace Arm
 			 * \retval  0  on success
 			 * \retval <0  translation failed
 			 */
-			int _index_by_vo (unsigned & i, addr_t const vo) const
+			bool _index_by_vo (unsigned & i, addr_t const vo) const
 			{
-				if (vo > max_virt_offset()) return -1;
-				i = vo >> Small_page::VIRT_SIZE_LOG2;
-				return 0;
+				if (vo > max_virt_offset()) return false;
+				i = vo >> Descriptor::VIRT_SIZE_LOG2;
+				return true;
 			}
 
 		public:
@@ -239,8 +221,8 @@ namespace Arm
 			 */
 			static addr_t max_virt_offset()
 			{
-				return (MAX_INDEX << Small_page::VIRT_SIZE_LOG2)
-				       + (Small_page::VIRT_SIZE - 1);
+				return (MAX_INDEX << Descriptor::VIRT_SIZE_LOG2)
+				       + (Descriptor::VIRT_SIZE - 1);
 			}
 
 			/**
@@ -264,8 +246,12 @@ namespace Arm
 			{
 				/* validate virtual address */
 				unsigned i;
-				assert(!_index_by_vo(i, vo));
-				assert(size_log2 == Small_page::VIRT_SIZE_LOG2);
+				assert(_index_by_vo(i, vo));
+				assert(size_log2 == Descriptor::VIRT_SIZE_LOG2);
+
+				if (Descriptor::valid(_entries[i]) &&
+				    _entries[i] != Small_page::create(flags, pa))
+						throw Double_insertion();
 
 				/* compose new descriptor value */
 				_entries[i] = Small_page::create(flags, pa);
@@ -279,30 +265,22 @@ namespace Arm
 			 */
 			void remove_region(addr_t vo, size_t const size)
 			{
+				assert (vo < (vo + size));
+
 				addr_t const ve = vo + size;
-				unsigned i;
-				while (1)
-				{
-					if (vo >= ve) { return; }
-					if (_index_by_vo(i, vo)) { return; }
-					addr_t next_vo;
+				for (unsigned i = 0; (vo < ve) && _index_by_vo(i, vo);
+					 vo = (vo + Descriptor::VIRT_SIZE)
+					      & Descriptor::VIRT_BASE_MASK) {
+
 					switch (Descriptor::type(_entries[i])) {
 
-					case Descriptor::FAULT: {
+					case Descriptor::SMALL_PAGE:
+						{
+							Descriptor::invalidate(_entries[i]);
+						}
 
-						vo &= Fault::VIRT_BASE_MASK;
-						next_vo = vo + Fault::VIRT_SIZE;
-						break; }
-
-					case Descriptor::SMALL_PAGE: {
-
-						vo &= Small_page::VIRT_BASE_MASK;
-						Descriptor::invalidate(_entries[i]);
-						next_vo = vo + Small_page::VIRT_SIZE;
-						break; }
+					default: ;
 					}
-					if (next_vo < vo) { return; }
-					vo = next_vo;
 				}
 			}
 
@@ -316,22 +294,6 @@ namespace Arm
 				return true;
 			}
 
-			/**
-			 * Get next translation size log2 by area constraints
-			 *
-			 * \param vo  virtual offset within this table
-			 * \param s   area size
-			 */
-			static unsigned
-			translation_size_l2(addr_t const vo, size_t const s)
-			{
-				off_t const o = vo & Small_page::VIRT_OFFSET_MASK;
-				if (!o && s >= Small_page::VIRT_SIZE)
-					return Small_page::VIRT_SIZE_LOG2;
-				PDBG("Insufficient alignment or size");
-				while (1) ;
-			}
-
 	} __attribute__((aligned(1<<Page_table::ALIGNM_LOG2)));
 
 	/**
@@ -339,24 +301,15 @@ namespace Arm
 	 */
 	class Section_table
 	{
-		enum {
-			_16KB_LOG2 = 14,
-			_1MB_LOG2 = 20,
-			_16MB_LOG2 = 24,
-
-			DOMAIN = 0,
-		};
+		enum { DOMAIN = 0 };
 
 		public:
 
 			enum {
-				SIZE_LOG2 = _16KB_LOG2,
-				SIZE = 1 << SIZE_LOG2,
+				_16KB_LOG2  = 14,
+				SIZE_LOG2   = _16KB_LOG2,
+				SIZE        = 1 << SIZE_LOG2,
 				ALIGNM_LOG2 = SIZE_LOG2,
-
-				VIRT_SIZE_LOG2 = _1MB_LOG2,
-				VIRT_SIZE = 1 << VIRT_SIZE_LOG2,
-				VIRT_BASE_MASK = ~((1 << VIRT_SIZE_LOG2) - 1),
 
 				MAX_COSTS_PER_TRANSLATION = sizeof(Page_table),
 
@@ -373,6 +326,14 @@ namespace Arm
 				 * Descriptor types
 				 */
 				enum Type { FAULT, PAGE_TABLE, SECTION };
+
+				enum {
+					_1MB_LOG2        = 20,
+					VIRT_SIZE_LOG2   = _1MB_LOG2,
+					VIRT_SIZE        = 1 << VIRT_SIZE_LOG2,
+					VIRT_OFFSET_MASK = (1 << VIRT_SIZE_LOG2) - 1,
+					VIRT_BASE_MASK   = ~VIRT_OFFSET_MASK,
+				};
 
 				struct Type_0   : Bitfield<0, 2> { };
 				struct Type_1_0 : Bitfield<1, 1> { };
@@ -422,18 +383,6 @@ namespace Arm
 			};
 
 			/**
-			 * Represents an untranslated virtual region
-			 */
-			struct Fault : Descriptor
-			{
-				enum {
-					VIRT_SIZE_LOG2 = _1MB_LOG2,
-					VIRT_SIZE = 1 << VIRT_SIZE_LOG2,
-					VIRT_BASE_MASK = ~((1 << VIRT_SIZE_LOG2) - 1)
-				};
-			};
-
-			/**
 			 * Link to a second level translation table
 			 */
 			struct Page_table_descriptor : Descriptor
@@ -458,13 +407,6 @@ namespace Arm
 			 */
 			struct Section : Descriptor
 			{
-				enum {
-					VIRT_SIZE_LOG2   = _1MB_LOG2,
-					VIRT_SIZE        = 1 << VIRT_SIZE_LOG2,
-					VIRT_OFFSET_MASK = (1 << VIRT_SIZE_LOG2) - 1,
-					VIRT_BASE_MASK   = ~(VIRT_OFFSET_MASK),
-				};
-
 				struct B        : Bitfield<2, 1> { };   /* mem. region attr. */
 				struct C        : Bitfield<3, 1> { };   /* mem. region attr. */
 				struct Xn       : Bitfield<4, 1> { };   /* execute never bit */
@@ -513,11 +455,11 @@ namespace Arm
 			 * \retval <0  if virtual offset couldn't be resolved,
 			 *             in this case 'i' reside invalid
 			 */
-			int _index_by_vo(unsigned & i, addr_t const vo) const
+			bool _index_by_vo(unsigned & i, addr_t const vo) const
 			{
-				if (vo > max_virt_offset()) return -1;
-				i = vo >> Section::VIRT_SIZE_LOG2;
-				return 0;
+				if (vo > max_virt_offset()) return false;
+				i = vo >> Descriptor::VIRT_SIZE_LOG2;
+				return true;
 			}
 
 		public:
@@ -544,8 +486,8 @@ namespace Arm
 			 */
 			static addr_t max_virt_offset()
 			{
-				return (MAX_INDEX << Section::VIRT_SIZE_LOG2)
-				       + (Section::VIRT_SIZE - 1);
+				return (MAX_INDEX << Descriptor::VIRT_SIZE_LOG2)
+				       + (Descriptor::VIRT_SIZE - 1);
 			}
 
 			/**
@@ -591,11 +533,11 @@ namespace Arm
 
 				/* sanity checks */
 				unsigned i;
-				assert(!_index_by_vo (i, vo));
-				assert(size_log2 <= Section::VIRT_SIZE_LOG2);
+				assert(_index_by_vo (i, vo));
+				assert(size_log2 <= Descriptor::VIRT_SIZE_LOG2);
 
 				/* select descriptor type by translation size */
-				if (size_log2 < Section::VIRT_SIZE_LOG2) {
+				if (size_log2 < Descriptor::VIRT_SIZE_LOG2) {
 					Page_table * pt = 0;
 					switch (Descriptor::type(_entries[i])) {
 
@@ -629,8 +571,13 @@ namespace Arm
 					/* insert translation */
 					pt->insert_translation(vo - Section::Pa_31_20::masked(vo),
 					                       pa, size_log2, flags);
-				} else
+				} else {
+					if (Descriptor::valid(_entries[i]) &&
+						_entries[i] != Section::create(flags, pa, st))
+						throw Double_insertion();
+
 					_entries[i] = Section::create(flags, pa, st);
+				}
 			}
 
 			/**
@@ -642,104 +589,43 @@ namespace Arm
 			void remove_region(addr_t vo, size_t const size,
 			                   Physical_slab_allocator * slab)
 			{
+				assert(vo < (vo + size));
+
 				addr_t const ve = vo + size;
-				unsigned i;
-				while (1)
-				{
-					if (vo >= ve) { return; }
-					if (_index_by_vo(i, vo)) { return; }
-					addr_t next_vo;
+				for (unsigned i = 0; (vo < ve) && _index_by_vo(i, vo);
+				     vo = (vo + Descriptor::VIRT_SIZE)
+				          & Descriptor::VIRT_BASE_MASK) {
+
 					switch (Descriptor::type(_entries[i])) {
 
-					case Descriptor::FAULT: {
+					case Descriptor::PAGE_TABLE:
+						{
+							typedef Page_table_descriptor Ptd;
+							typedef Page_table            Pt;
 
-						vo &= Fault::VIRT_BASE_MASK;
-						next_vo = vo + Fault::VIRT_SIZE;
-						break; }
+							Pt * pt_phys = (Pt *) Ptd::Pa_31_10::masked(_entries[i]);
+							Pt * pt      = (Pt *) slab->virt_addr(pt_phys);
+							pt = pt ? pt : pt_phys; // TODO hack for core
 
-					case Descriptor::PAGE_TABLE: {
+							addr_t const pt_vo = vo - Section::Pa_31_20::masked(vo);
+							pt->remove_region(pt_vo, ve - vo);
 
-						typedef Page_table_descriptor Ptd;
-						typedef Page_table            Pt;
-
-						Pt * pt_phys = (Pt *) Ptd::Pa_31_10::masked(_entries[i]);
-						Pt * pt      = (Pt *) slab->virt_addr(pt_phys);
-						pt = pt ? pt : pt_phys; // TODO hack
-						addr_t const pt_vo = vo - Section::Pa_31_20::masked(vo);
-						pt->remove_region(pt_vo, ve - vo);
-						if (pt->empty()) {
-							Descriptor::invalidate(_entries[i]);
-							destroy(slab, pt);
+							if (pt->empty()) {
+								Descriptor::invalidate(_entries[i]);
+								destroy(slab, pt);
+							}
+							break;
 						}
-						next_vo = vo + Pt::VIRT_SIZE;
-						break; }
 
-					case Descriptor::SECTION: {
+					case Descriptor::SECTION:
+						{
+							Descriptor::invalidate(_entries[i]);
+						}
 
-						vo &= Section::VIRT_BASE_MASK;
-						Descriptor::invalidate(_entries[i]);
-						next_vo = vo + Section::VIRT_SIZE;
-						break; }
+					default: ;
 					}
-					if (next_vo < vo) { return; }
-					vo = next_vo;
 				}
 			}
-
-			/**
-			 * Get base address for hardware table walk
-			 */
-			addr_t base() const { return (addr_t)_entries; }
-
-			/**
-			 * Get next translation size log2 by area constraints
-			 *
-			 * \param vo  virtual offset within this table
-			 * \param s   area size
-			 */
-			static unsigned
-			translation_size_l2(addr_t const vo, size_t const s)
-			{
-				off_t const o = vo & Section::VIRT_OFFSET_MASK;
-				if (!o && s >= Section::VIRT_SIZE)
-					return Section::VIRT_SIZE_LOG2;
-				return Page_table::translation_size_l2(o, s);
-			}
-
-			/**
-			 * Insert translations for given area, do not permit displacement
-			 *
-			 * \param vo     virtual offset within this table
-			 * \param s      area size
-			 * \param flags  mapping flags
-			 */
-			template <typename ST>
-			void map_core_area(addr_t vo, size_t s, bool io_mem, ST * st)
-			{
-				/* initialize parameters */
-				Page_flags const flags = Page_flags::map_core_area(io_mem);
-				unsigned tsl2 = translation_size_l2(vo, s);
-				size_t ts = 1 << tsl2;
-
-				/* walk through the area and map all offsets */
-				while (1)
-				{
-					/* map current offset without displacement */
-					try {
-						st->insert_translation(vo, vo, tsl2, flags, 0);
-					} catch(Allocator::Out_of_memory) {
-						PDBG("Displacement not permitted");
-						return;
-					}
-					/* update parameters for next round or exit */
-					vo += ts;
-					s = ts < s ? s - ts : 0;
-					if (!s) return;
-					tsl2 = translation_size_l2(vo, s);
-					ts   = 1 << tsl2;
-				}
-			}
-
 	} __attribute__((aligned(1<<Section_table::ALIGNM_LOG2)));
 }
 

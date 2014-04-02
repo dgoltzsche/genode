@@ -41,16 +41,13 @@ class Arm_v7::Section_table : public Arm::Section_table
 		 */
 		struct Page_table_descriptor : Base::Page_table_descriptor
 		{
-			struct Ns : Bitfield<3, 1> { }; /* non-secure bit */
-
 			/**
 			 * Compose descriptor value
 			 */
 			static access_t create(Arm::Page_table * const pt,
 			                       Section_table * const st)
 			{
-				access_t const ns = Ns::bits(!st->secure());
-				return Base::Page_table_descriptor::create(pt) | ns;
+				return Base::Page_table_descriptor::create(pt);
 			}
 		};
 
@@ -59,30 +56,17 @@ class Arm_v7::Section_table : public Arm::Section_table
 		 */
 		struct Section : Base::Section
 		{
-			struct Ns : Bitfield<19, 1> { }; /* non-secure bit */
-
 			/**
 			 * Compose descriptor value
 			 */
 			static access_t create(Page_flags const & flags,
 			                       addr_t const pa, Section_table * const st)
 			{
-				access_t const ns = Ns::bits(!st->secure());
-				return Base::Section::create(flags, pa) | ns;
+				return Base::Section::create(flags, pa);
 			}
 		};
 
-	protected:
-
-		/* if this table is dedicated to secure mode or to non-secure mode */
-		bool const _secure;
-
 	public:
-
-		/**
-		 * Constructor
-		 */
-		Section_table() : _secure(Processor_driver::secure_mode()) { }
 
 		/**
 		 * Insert one atomic translation into this table
@@ -96,25 +80,6 @@ class Arm_v7::Section_table : public Arm::Section_table
 		{
 			Base::insert_translation(vo, pa, size_log2, flags, this, slab);
 		}
-
-		/**
-		 * Insert translations for given area, do not permit displacement
-		 *
-		 * \param vo      virtual offset within this table
-		 * \param s       area size
-		 * \param io_mem  wether the area maps MMIO
-		 */
-		void map_core_area(addr_t vo, size_t s, bool const io_mem)
-		{
-			Base::map_core_area(vo, s, io_mem, this);
-		}
-
-
-		/***************
-		 ** Accessors **
-		 ***************/
-
-		bool secure() const { return _secure; }
 };
 
 

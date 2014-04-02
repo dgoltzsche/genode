@@ -60,14 +60,16 @@ namespace Genode
 			{
 				Core_mem_allocator * cma =
 					static_cast<Core_mem_allocator*>(platform()->core_mem_alloc());
+				void *tlb;
 
 				/* get some aligned space for the kernel object */
-				if (!cma->alloc_aligned(sizeof(Tlb), (void**)&_tlb,
+				if (!cma->alloc_aligned(sizeof(Tlb), (void**)&tlb,
 				                        Tlb::ALIGNM_LOG2).is_ok()) {
 					PERR("failed to allocate kernel object");
 					throw Root::Quota_exceeded();
 				}
 
+				_tlb = new (tlb) Tlb();
 				_pslab = new (cma) Aligned_slab<1<<10, 32, 10>(cma);
 				Kernel::mtc()->map(_tlb, _pslab);
 

@@ -59,6 +59,22 @@ void Kernel::Processor_client::_interrupt(unsigned const processor_id)
 void Kernel::Processor_client::_schedule() { __processor->schedule(this); }
 
 
+void Kernel::Processor_client::tlb_to_flush(unsigned pd_id)
+{
+	_flush_tlb_pd_id   = pd_id;
+	_flush_tlb_ref_cnt = PROCESSORS;
+	_unschedule();
+}
+
+
+void Kernel::Processor_client::flush_tlb_by_id()
+{
+	Processor::flush_tlb_by_pid(_flush_tlb_pd_id);
+	if (--_flush_tlb_ref_cnt == 0)
+		_schedule();
+}
+
+
 void Kernel::Processor::schedule(Processor_client * const client)
 {
 	if (_id != executing_id()) {
@@ -98,4 +114,24 @@ void Kernel::Processor_client::_yield()
 {
 	assert(__processor->id() == Processor::executing_id());
 	__processor->scheduler()->yield_occupation();
+}
+
+
+void Kernel::Processor::flush_tlb(Processor_client * const client)
+{
+	Genode::List_element<Processor_client> * last = _ipi_scheduler.first();
+	while (last && last->next()) last = last->next();
+
+	_ipi_scheduler.insert(&client->_flush_tlb_li, last);
+	pic()->trigger_ip_interrupt(_id);
+}
+
+
+void Kernel::Processor::flush_tlb()
+{
+	for (Genode::List_element<Processor_client> * cli = _ipi_scheduler.first(); cli;
+		 cli = _ipi_scheduler.first()) {
+		cli->object()->flush_tlb_by_id();
+		_ipi_scheduler.remove(cli);
+	}
 }

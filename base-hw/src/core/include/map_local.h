@@ -28,7 +28,8 @@ namespace Genode {
 	 *
 	 * \return true on success
 	 */
-	bool map_local(addr_t from_phys, addr_t to_virt, size_t num_pages);
+	bool map_local(addr_t from_phys, addr_t to_virt, size_t num_pages,
+	               bool io_mem = false);
 
 	/**
 	 * Unmap pages from core's address space

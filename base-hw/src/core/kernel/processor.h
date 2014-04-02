@@ -18,6 +18,8 @@
 #include <processor_driver.h>
 #include <kernel/scheduler.h>
 
+#include <util/list.h>
+
 namespace Kernel
 {
 	/**
@@ -43,6 +45,12 @@ class Kernel::Processor_client : public Processor_scheduler::Item
 		Processor * __processor;
 
 	protected:
+
+		Genode::List_element<Processor_client> _flush_tlb_li;
+		unsigned                               _flush_tlb_pd_id;
+		unsigned                               _flush_tlb_ref_cnt;
+
+		friend class Processor;
 
 		/**
 		 * Handle an interrupt exception that occured during execution
@@ -92,6 +100,10 @@ class Kernel::Processor_client : public Processor_scheduler::Item
 		 */
 		virtual void proceed(unsigned const processor_id) = 0;
 
+		void tlb_to_flush(unsigned pd_id);
+
+		void flush_tlb_by_id();
+
 		/**
 		 * Constructor
 		 *
@@ -101,7 +113,8 @@ class Kernel::Processor_client : public Processor_scheduler::Item
 		Processor_client(Processor * const processor, Priority const priority)
 		:
 			Processor_scheduler::Item(priority),
-			__processor(processor)
+			__processor(processor),
+			_flush_tlb_li(this)
 		{ }
 
 		/**
@@ -118,8 +131,11 @@ class Kernel::Processor : public Processor_driver
 {
 	private:
 
+		using Ipi_scheduler = Genode::List<Genode::List_element<Processor_client> >;
+
 		unsigned const      _id;
 		Processor_scheduler _scheduler;
+		Ipi_scheduler       _ipi_scheduler;
 		bool                _ip_interrupt_pending;
 
 	public:
@@ -155,6 +171,11 @@ class Kernel::Processor : public Processor_driver
 		 * \param client  targeted client
 		 */
 		void schedule(Processor_client * const client);
+
+
+		void flush_tlb(Processor_client * const client);
+
+		void flush_tlb();
 
 
 		/***************

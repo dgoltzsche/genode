@@ -171,8 +171,7 @@ void Thread::init(Processor * const processor, Pd * const pd,
 
 	/* join protection domain */
 	_pd = pd;
-	addr_t const tlb = _pd->tlb()->base();
-	User_context::init_thread(tlb, pd_id());
+	User_context::init_thread((addr_t)_pd->tlb(), pd_id());
 
 	/* print log message */
 	if (START_VERBOSE) {
@@ -535,8 +534,11 @@ void Thread::_call_access_thread_regs()
 
 void Thread::_call_update_pd()
 {
-	/* update hardware caches */
-	Processor::flush_tlb_by_pid(user_arg_1());
+	tlb_to_flush(user_arg_1());
+
+	/* inform other processors */
+	for (unsigned i = 0; i < PROCESSORS; i++)
+		Kernel::processor_pool()->processor(i)->flush_tlb(this);
 }
 
 

@@ -59,7 +59,6 @@ namespace Kernel
 
 	/* import Genode types */
 	typedef Genode::umword_t       umword_t;
-	typedef Genode::Core_tlb       Core_tlb;
 	typedef Genode::Core_thread_id Core_thread_id;
 }
 
@@ -99,7 +98,7 @@ namespace Kernel
 	 */
 	Pd * core()
 	{
-		constexpr int tlb_align  = 1 << Core_tlb::ALIGNM_LOG2;
+		constexpr int tlb_align  = 1 << Tlb::ALIGNM_LOG2;
 
 		struct Simple_allocator : Genode::Allocator_avl
 		{
@@ -133,7 +132,7 @@ namespace Kernel
 				/* map core's mmio regions */
 				Native_region * r = Platform::_core_only_mmio_regions(0);
 				for (unsigned i = 0; r; r = Platform::_core_only_mmio_regions(++i))
-					map_local(r->base, r->base, r->size / get_page_size());
+					map_local(r->base, r->base, r->size / get_page_size(), true);
 			}
 		};
 
@@ -204,7 +203,7 @@ extern "C" void init_kernel_uniprocessor()
 	 ************************************************************************/
 
 	/* calculate in advance as needed later when data writes aren't allowed */
-	core_tlb_base = core()->tlb()->base();
+	core_tlb_base = (addr_t) core()->tlb();
 	core_pd_id    = core_id();
 
 	/* initialize all processor objects */
@@ -325,6 +324,8 @@ extern "C" void kernel()
 	 */
 	Processor_client * const old_occupant = scheduler->occupant();
 	old_occupant->exception(processor_id);
+
+	processor->flush_tlb();
 
 	/*
 	 * The processor local as well as remote exception-handling may have

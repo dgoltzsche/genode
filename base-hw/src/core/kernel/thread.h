@@ -307,6 +307,8 @@ class Kernel::Thread
 		          Native_utcb * const utcb, bool const start);
 
 
+		static void inter_processor_work();
+
 		/**********************
 		 ** Processor_client **
 		 **********************/

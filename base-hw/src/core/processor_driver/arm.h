@@ -656,8 +656,13 @@ namespace Arm
 		 */
 		static void flush_tlb_by_pid(unsigned const pid)
 		{
-			asm volatile ("mcr p15, 0, %[pid], c8, c7, 2" :: [pid]"r"(pid) : );
-			flush_caches();
+			asm volatile (
+				"dsb\n"
+				"mcr p15, 0, %[rd], c7, c5, 6\n"
+				"mcr p15, 0, %[pid], c8, c7, 2\n"
+				"dsb\n"
+				"isb" :: [pid]"r"(pid), [rd]"r"(0) : );
+//			flush_caches();
 		}
 
 		/**
@@ -665,8 +670,13 @@ namespace Arm
 		 */
 		static void flush_tlb()
 		{
-			asm volatile ("mcr p15, 0, %[rd], c8, c7, 0" :: [rd]"r"(0) : );
-			flush_caches();
+			asm volatile (
+				"dsb\n"
+				"mcr p15, 0, %[rd], c7, c5, 6\n"
+				"mcr p15, 0, %[rd], c8, c7, 0\n"
+				"dsb\n"
+				"isb":: [rd]"r"(0) : );
+//			flush_caches();
 		}
 
 		/**

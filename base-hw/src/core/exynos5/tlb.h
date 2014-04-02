@@ -20,24 +20,11 @@
 
 namespace Genode
 {
-	class Tlb : public Arm_v7::Section_table { };
-
-	/**
-	 * Translation lookaside buffer of core
-	 */
-	class Core_tlb : public Tlb
+	class Tlb : public Arm_v7::Section_table
 	{
-		public:
+	public:
 
-			/**
-			 * Constructor - ensures that core never gets a pagefault
-			 */
-			Core_tlb()
-			{
-				using namespace Genode;
-				map_core_area(Board::RAM_0_BASE, Board::RAM_0_SIZE, 0);
-				map_core_area(Board::MMIO_0_BASE, Board::MMIO_0_SIZE, 1);
-			}
+		void * operator new (Genode::size_t, void * p) { return p; }
 	};
 }
 

@@ -191,11 +191,11 @@ void Core_parent::exit(int exit_value)
  ** Support for core memory management **
  ****************************************/
 
-bool Genode::map_local(addr_t from_phys, addr_t to_virt, size_t num_pages)
+bool Genode::map_local(addr_t from_phys, addr_t to_virt, size_t num_pages, bool io_mem)
 {
 	/* insert mapping into core's TLB */
 	Tlb *tlb = Kernel::core_pd()->tlb();
-	const Page_flags flags = Page_flags::map_core_area(false);
+	const Page_flags flags = Page_flags::map_core_area(io_mem);
 
 	try {
 		for (size_t i = 0; i < num_pages; i++) {
@@ -218,8 +218,8 @@ bool Genode::unmap_local(addr_t virt_addr, size_t num_pages)
 	tlb->remove_region(virt_addr, num_pages * get_page_size(),
 	                   Kernel::core_pd()->platform_pd()->page_slab());
 
-	/* make the new DS-content visible to other PDs */
-	Kernel::update_region(virt_addr, num_pages * get_page_size());
+	/* update translation caches of all processors */
+	Kernel::update_pd(Kernel::core_pd()->id());
 	return true;
 }
 

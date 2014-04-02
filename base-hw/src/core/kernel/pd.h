@@ -254,7 +254,7 @@ class Kernel::Pd : public Object<Pd, MAX_PDS, Pd_ids, pd_ids, pd_pool>
 		void admit(Processor::Context * const c)
 		{
 			c->protection_domain(id());
-			c->tlb(tlb()->base());
+			c->tlb((addr_t)tlb());
 		}
 
 

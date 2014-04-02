@@ -19,23 +19,9 @@
 #include <platform.h>
 #include <platform_pd.h>
 #include <platform_thread.h>
-#include <processor_broadcast.h>
 #include <tlb.h>
 
 using namespace Genode;
-
-
-/**************************************
- ** Helpers for processor broadcasts **
- **************************************/
-
-struct Update_pd_data { unsigned const pd_id; };
-
-void update_pd(void * const data)
-{
-	auto const d = reinterpret_cast<Update_pd_data *>(data);
-	Kernel::update_pd(d->pd_id);
-}
 
 
 /***************
@@ -58,9 +44,7 @@ void Rm_client::unmap(addr_t, addr_t virt_base, size_t size)
 	tlb->remove_region(virt_base, size,pt->pd()->page_slab());
 
 	/* update translation caches of all processors */
-	Update_pd_data data { pt->pd()->id() };
-	Processor_broadcast_operation const operation(update_pd, &data);
-	processor_broadcast()->execute(&operation);
+	Kernel::update_pd(pt->pd()->id());
 }
 
 
