@@ -34,6 +34,7 @@
 #include <unmanaged_singleton.h>
 
 /* base-hw includes */
+#include <kernel/irq.h>
 #include <kernel/perf_counter.h>
 
 using namespace Kernel;
@@ -265,8 +266,12 @@ extern "C" void init_kernel_multiprocessor()
 		t.sp = (addr_t)s + STACK_SIZE;
 		t.init(processor_pool()->processor(processor_id), core_id(), &utcb, 1);
 
+		/* initialize interrupt objects */
+		static Genode::uint8_t _irqs[Pic::MAX_INTERRUPT_ID * sizeof(Irq)];
+		for (unsigned i = 0; i < Pic::MAX_INTERRUPT_ID; i++)
+			new (&_irqs[i * sizeof(Irq)]) Irq(i);
+
 		/* kernel initialization finished */
-		init_platform();
 	}
 	reset_scheduling_time(processor_id);
 }
