@@ -19,7 +19,7 @@
 #include <root/root.h>
 
 /* Core includes */
-#include <tlb.h>
+#include <translation_table.h>
 #include <platform.h>
 #include <platform_thread.h>
 #include <address_space.h>
@@ -41,7 +41,7 @@ namespace Genode
 			Native_capability         _parent;
 			Native_thread_id          _main_thread;
 			char const * const        _label;
-			Tlb                     * _tlb;
+			Translation_table       * _tt;
 			uint8_t                   _kernel_pd[sizeof(Kernel::Pd)];
 			Physical_slab_allocator * _pslab;
 
@@ -50,8 +50,8 @@ namespace Genode
 			/**
 			 * Constructor for core pd
 			 */
-			Platform_pd(Tlb * tlb, Physical_slab_allocator * slab)
-			: _main_thread(0), _label("core"), _tlb(tlb), _pslab(slab) { }
+			Platform_pd(Translation_table * tt, Physical_slab_allocator * slab)
+			: _main_thread(0), _label("core"), _tt(tt), _pslab(slab) { }
 
 			/**
 			 * Constructor for non-core pd
@@ -60,18 +60,18 @@ namespace Genode
 			{
 				Core_mem_allocator * cma =
 					static_cast<Core_mem_allocator*>(platform()->core_mem_alloc());
-				void *tlb;
+				void *tt;
 
 				/* get some aligned space for the kernel object */
-				if (!cma->alloc_aligned(sizeof(Tlb), (void**)&tlb,
-				                        Tlb::ALIGNM_LOG2).is_ok()) {
+				if (!cma->alloc_aligned(sizeof(Translation_table), (void**)&tt,
+				                        Translation_table::ALIGNM_LOG2).is_ok()) {
 					PERR("failed to allocate kernel object");
 					throw Root::Quota_exceeded();
 				}
 
-				_tlb = new (tlb) Tlb();
+				_tt = new (tt) Translation_table();
 				_pslab = new (cma) Aligned_slab<1<<10, 32, 10>(cma);
-				Kernel::mtc()->map(_tlb, _pslab);
+				Kernel::mtc()->map(_tt, _pslab);
 
 				/* create kernel object */
 				_id = Kernel::new_pd(&_kernel_pd, this);
@@ -122,17 +122,17 @@ namespace Genode
 			 ** Accessors **
 			 ***************/
 
-			unsigned const            id()        { return _id; }
-			char const * const        label()     { return _label; }
-			Tlb *                     tlb()       { return _tlb; }
-			Physical_slab_allocator * page_slab() { return _pslab; };
+			unsigned const            id()          { return _id;    }
+			char const * const        label()       { return _label; }
+			Physical_slab_allocator * page_slab()   { return _pslab; };
+			Translation_table * translation_table() { return _tt;    }
 			void page_slab(Physical_slab_allocator *pslab) { _pslab = pslab; };
 
-			void * tlb_phys_addr() const
+			void * tt_phys_addr() const
 			{
 				Core_mem_allocator * cma =
 					static_cast<Core_mem_allocator*>(platform()->core_mem_alloc());
-				return cma->phys_addr(_tlb);
+				return cma->phys_addr(_tt);
 			}
 
 

@@ -18,7 +18,7 @@ using namespace Genode;
 
 Platform_pd::~Platform_pd()
 {
-	_tlb->remove_region(platform()->vm_start(), platform()->vm_size(), _pslab);
+	_tt->remove_region(platform()->vm_start(), platform()->vm_size(), _pslab);
 	if (Kernel::bin_pd(_id)) {
 		PERR("failed to destruct protection domain at kernel");
 	}

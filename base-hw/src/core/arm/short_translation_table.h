@@ -1,5 +1,5 @@
 /*
- * \brief   TLB driver for core
+ * \brief   Short descriptor translation table definitions
  * \author  Martin Stein
  * \author  Stefan Kalkowski
  * \date    2012-02-22
@@ -12,8 +12,8 @@
  * under the terms of the GNU General Public License version 2.
  */
 
-#ifndef _TLB__ARM_H_
-#define _TLB__ARM_H_
+#ifndef _ARM__SHORT_TRANSLATION_TABLE_H_
+#define _ARM__SHORT_TRANSLATION_TABLE_H_
 
 /* Genode includes */
 #include <util/register.h>
@@ -21,7 +21,7 @@
 
 /* base-hw includes */
 #include <assert.h>
-#include <tlb/page_flags.h>
+#include <page_flags.h>
 #include <slab_align.h>
 
 namespace Arm
@@ -493,8 +493,6 @@ namespace Arm
 			/**
 			 * Insert one atomic translation into this table
 			 *
-			 * \param ST           platform specific section-table type
-			 * \param st           platform specific section table
 			 * \param vo           offset of the virtual region represented
 			 *                     by the translation within the virtual
 			 *                     region represented by this table
@@ -521,16 +519,11 @@ namespace Arm
 			 * spans the the same virtual range and is not a link to another
 			 * table level.
 			 */
-			template <typename ST>
 			void insert_translation(addr_t const vo, addr_t const pa,
 			                        size_t const size_log2,
 			                        Page_flags const & flags,
-			                        ST * const st,
 			                        Physical_slab_allocator * slab)
 			{
-				typedef typename ST::Section Section;
-				typedef typename ST::Page_table_descriptor Page_table_descriptor;
-
 				/* sanity checks */
 				unsigned i;
 				assert(_index_by_vo (i, vo));
@@ -549,7 +542,7 @@ namespace Arm
 							pt = new (slab) Page_table();
 							Page_table * pt_phys = (Page_table*) slab->phys_addr(pt);
 							pt_phys = pt_phys ? pt_phys : pt; /* hack for core */
-							_entries[i] = Page_table_descriptor::create(pt_phys, st);
+							_entries[i] = Page_table_descriptor::create(pt_phys);
 							break;
 						}
 
@@ -573,10 +566,10 @@ namespace Arm
 					                       pa, size_log2, flags);
 				} else {
 					if (Descriptor::valid(_entries[i]) &&
-						_entries[i] != Section::create(flags, pa, st))
+						_entries[i] != Section::create(flags, pa))
 						throw Double_insertion();
 
-					_entries[i] = Section::create(flags, pa, st);
+					_entries[i] = Section::create(flags, pa);
 				}
 			}
 
@@ -629,5 +622,7 @@ namespace Arm
 	} __attribute__((aligned(1<<Section_table::ALIGNM_LOG2)));
 }
 
-#endif /* _TLB__ARM_H_ */
+namespace Genode { using Translation_table = Arm::Section_table; }
+
+#endif /* _ARM__SHORT_TRANSLATION_TABLE_H_ */
 

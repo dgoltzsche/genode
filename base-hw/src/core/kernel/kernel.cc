@@ -98,7 +98,8 @@ namespace Kernel
 	 */
 	Pd * core()
 	{
-		constexpr int tlb_align  = 1 << Tlb::ALIGNM_LOG2;
+		using Ttable = Genode::Translation_table;
+		constexpr int tt_align  = 1 << Ttable::ALIGNM_LOG2;
 
 		struct Simple_allocator : Genode::Allocator_avl
 		{
@@ -113,16 +114,16 @@ namespace Kernel
 
 		struct Core_pd : Platform_pd, Pd
 		{
-			Core_pd(Tlb * tlb, Page_slab * slab)
-			: Platform_pd(tlb, slab),
-			  Pd(tlb, this)
+			Core_pd(Ttable * tt, Page_slab * slab)
+			: Platform_pd(tt, slab),
+			  Pd(tt, this)
 			{
 				using namespace Genode;
 
 				Platform_pd::_id = Pd::id();
 
 				/* map exception vector for core */
-				Kernel::mtc()->map(tlb, slab);
+				Kernel::mtc()->map(tt, slab);
 
 				/* map core's program image */
 				addr_t start = trunc_page((addr_t)&_prog_img_beg);
@@ -136,10 +137,10 @@ namespace Kernel
 			}
 		};
 
-		Simple_allocator * sa   = unmanaged_singleton<Simple_allocator>();
-		Tlb              * tlb  = unmanaged_singleton<Tlb, tlb_align>();
-		Page_slab        * slab = unmanaged_singleton<Page_slab, tlb_align>(sa);
-		return unmanaged_singleton<Core_pd>(tlb, slab);
+		Simple_allocator  * sa   = unmanaged_singleton<Simple_allocator>();
+		Ttable            * tt   = unmanaged_singleton<Ttable, tt_align>();
+		Page_slab         * slab = unmanaged_singleton<Page_slab, tt_align>(sa);
+		return unmanaged_singleton<Core_pd>(tt, slab);
 	}
 
 	/**
@@ -161,12 +162,12 @@ namespace Kernel
 	/**
 	 * Get attributes of the kernel objects
 	 */
-	size_t   thread_size()          { return sizeof(Thread); }
-	size_t   pd_size()              { return sizeof(Tlb) + sizeof(Pd); }
-	size_t   signal_context_size()  { return sizeof(Signal_context); }
-	size_t   signal_receiver_size() { return sizeof(Signal_receiver); }
-	unsigned pd_alignment_log2()    { return Tlb::ALIGNM_LOG2; }
-	size_t   vm_size()              { return sizeof(Vm); }
+	size_t thread_size()          { return sizeof(Thread); }
+	size_t signal_context_size()  { return sizeof(Signal_context); }
+	size_t signal_receiver_size() { return sizeof(Signal_receiver); }
+	size_t vm_size()              { return sizeof(Vm); }
+	unsigned pd_alignm_log2() { return Genode::Translation_table::ALIGNM_LOG2; }
+	size_t pd_size() { return sizeof(Genode::Translation_table) + sizeof(Pd); }
 
 	enum { STACK_SIZE = 64 * 1024 };
 
@@ -179,7 +180,7 @@ namespace Kernel
 		return s;
 	}
 
-	addr_t   core_tlb_base;
+	addr_t   core_tt_base;
 	unsigned core_pd_id;
 }
 
@@ -203,7 +204,7 @@ extern "C" void init_kernel_uniprocessor()
 	 ************************************************************************/
 
 	/* calculate in advance as needed later when data writes aren't allowed */
-	core_tlb_base = (addr_t) core()->tlb();
+	core_tt_base = (addr_t) core()->translation_table();
 	core_pd_id    = core_id();
 
 	/* initialize all processor objects */
@@ -235,7 +236,7 @@ extern "C" void init_kernel_multiprocessor()
 	Processor::init_phys_kernel();
 
 	/* switch to core address space */
-	Processor::init_virt_kernel(core_tlb_base, core_pd_id);
+	Processor::init_virt_kernel(core_tt_base, core_pd_id);
 
 	/************************************
 	 ** Now it's safe to use 'cmpxchg' **

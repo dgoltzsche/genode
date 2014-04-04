@@ -21,7 +21,7 @@
 #include <kernel/configuration.h>
 #include <kernel/object.h>
 #include <kernel/processor.h>
-#include <tlb.h>
+#include <translation_table.h>
 #include <assert.h>
 #include <slab_align.h>
 
@@ -149,7 +149,7 @@ class Kernel::Mode_transition_control
 	public:
 
 		enum {
-			SIZE_LOG2 = Tlb::MIN_PAGE_SIZE_LOG2,
+			SIZE_LOG2 = Genode::Translation_table::MIN_PAGE_SIZE_LOG2,
 			SIZE = 1 << SIZE_LOG2,
 			VIRT_BASE = Processor::EXCEPTION_ENTRY,
 			VIRT_END = VIRT_BASE + SIZE,
@@ -186,13 +186,14 @@ class Kernel::Mode_transition_control
 		/**
 		 * Map the mode transition page to a virtual address space
 		 *
-		 * \param tlb  translation buffer of the address space
+		 * \param tt   translation buffer of the address space
 		 * \param ram  RAM donation for mapping (first try without)
 		 */
-		void map(Tlb * tlb, Genode::Physical_slab_allocator *alloc)
+		void map(Genode::Translation_table * tt,
+		         Genode::Physical_slab_allocator *alloc)
 		{
 			addr_t const phys_base = (addr_t)&_mt_begin;
-			tlb->insert_translation(VIRT_BASE, phys_base, SIZE_LOG2,
+			tt->insert_translation(VIRT_BASE, phys_base, SIZE_LOG2,
 			                        Page_flags::mode_transition(), alloc);
 		}
 
@@ -225,11 +226,14 @@ class Kernel::Pd : public Object<Pd, MAX_PDS, Pd_ids, pd_ids, pd_pool>
 {
 	private:
 
-		Tlb * const         _tlb;
-		Platform_pd * const _platform_pd;
+		Genode::Translation_table * const _tt;
+		Platform_pd               * const _platform_pd;
 
 		/* keep ready memory for size-aligned extra costs at construction */
-		enum { EXTRA_RAM_SIZE = 2 * Tlb::MAX_COSTS_PER_TRANSLATION };
+		enum {
+			EXTRA_RAM_SIZE = 2 * Genode::Translation_table::MAX_COSTS_PER_TRANSLATION
+		};
+
 		char _extra_ram[EXTRA_RAM_SIZE];
 
 	public:
@@ -237,11 +241,12 @@ class Kernel::Pd : public Object<Pd, MAX_PDS, Pd_ids, pd_ids, pd_pool>
 		/**
 		 * Constructor
 		 *
-		 * \param tlb          translation lookaside buffer of the PD
+		 * \param tt          translation lookaside buffer of the PD
 		 * \param platform_pd  core object of the PD
 		 */
-		Pd(Tlb * const tlb, Platform_pd * const platform_pd)
-		: _tlb(tlb), _platform_pd(platform_pd) { }
+		Pd(Genode::Translation_table * const tt,
+		   Platform_pd * const platform_pd)
+		: _tt(tt), _platform_pd(platform_pd) { }
 
 		/**
 		 * Destructor
@@ -254,7 +259,7 @@ class Kernel::Pd : public Object<Pd, MAX_PDS, Pd_ids, pd_ids, pd_pool>
 		void admit(Processor::Context * const c)
 		{
 			c->protection_domain(id());
-			c->tlb((addr_t)tlb());
+			c->translation_table((addr_t)translation_table());
 		}
 
 
@@ -262,9 +267,10 @@ class Kernel::Pd : public Object<Pd, MAX_PDS, Pd_ids, pd_ids, pd_pool>
 		 ** Accessors **
 		 ***************/
 
-		Tlb * tlb() const { return _tlb; }
-
 		Platform_pd * platform_pd() const { return _platform_pd; }
+
+		Genode::Translation_table * translation_table() const {
+			return _tt; }
 };
 
 #endif /* _KERNEL__PD_H_ */

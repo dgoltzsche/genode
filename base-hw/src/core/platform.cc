@@ -25,7 +25,7 @@
 #include <platform_pd.h>
 #include <util.h>
 #include <kernel/kernel.h>
-#include <tlb.h>
+#include <translation_table.h>
 
 using namespace Genode;
 
@@ -128,8 +128,6 @@ Platform::Platform()
 	init_alloc(_core_mem_alloc.virt_alloc(), virt_region,
 	           _core_only_ram_regions, psl2);
 
-	//TODO replace with new core tlb
-
 	/* make interrupts available to the interrupt allocator */
 	for (unsigned i = 0; i < Kernel::Pic::MAX_INTERRUPT_ID; i++)
 		_irq_alloc.add_range(i, 1);
@@ -193,19 +191,19 @@ void Core_parent::exit(int exit_value)
 
 bool Genode::map_local(addr_t from_phys, addr_t to_virt, size_t num_pages, bool io_mem)
 {
-	/* insert mapping into core's TLB */
-	Tlb *tlb = Kernel::core_pd()->tlb();
+	/* insert mapping into core's translation table */
+	Translation_table *tt = Kernel::core_pd()->translation_table();
 	const Page_flags flags = Page_flags::map_core_area(io_mem);
 
 	try {
 		for (size_t i = 0; i < num_pages; i++) {
-			tlb->insert_translation(to_virt, from_phys, get_page_size_log2(),
+			tt->insert_translation(to_virt, from_phys, get_page_size_log2(),
 			                        flags, Kernel::core_pd()->platform_pd()->page_slab());
 			from_phys += get_page_size();
 			to_virt   += get_page_size();
 		}
 	} catch(Allocator::Out_of_memory) {
-		PERR("TLB needs to much RAM");
+		PERR("Translation table needs to much RAM");
 		return false;
 	}
 	return true;
@@ -214,9 +212,9 @@ bool Genode::map_local(addr_t from_phys, addr_t to_virt, size_t num_pages, bool 
 
 bool Genode::unmap_local(addr_t virt_addr, size_t num_pages)
 {
-	Tlb *tlb = Kernel::core_pd()->tlb();
-	tlb->remove_region(virt_addr, num_pages * get_page_size(),
-	                   Kernel::core_pd()->platform_pd()->page_slab());
+	Translation_table *tt = Kernel::core_pd()->translation_table();
+	tt->remove_region(virt_addr, num_pages * get_page_size(),
+	                  Kernel::core_pd()->platform_pd()->page_slab());
 
 	/* update translation caches of all processors */
 	Kernel::update_pd(Kernel::core_pd()->id());
