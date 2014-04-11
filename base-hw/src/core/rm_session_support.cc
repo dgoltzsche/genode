@@ -67,7 +67,7 @@ int Pager_activation_base::apply_mapping()
 	/* insert mapping into translation table */
 	try {
 		tt->insert_translation(_mapping.virt_address, _mapping.phys_address,
-		                       _mapping.size_log2, flags, page_slab);
+		                       1 << _mapping.size_log2, flags, page_slab);
 	} catch(Allocator::Out_of_memory) {
 		PERR("Translation table needs to much RAM");
 		return -1;

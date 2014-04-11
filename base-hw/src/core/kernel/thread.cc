@@ -241,6 +241,8 @@ char const * Kernel::Thread::pd_label() const
 
 void Thread::_call_new_pd()
 {
+	using namespace Genode;
+
 	/* create protection domain */
 	void        * p        = (void *) user_arg_1();
 	Platform_pd * ppd      = (Platform_pd *) user_arg_2();
@@ -321,7 +323,7 @@ void Thread::_call_start_thread()
 	}
 	/* start thread */
 	Native_utcb * const utcb = (Native_utcb *)user_arg_4();
-	thread->init(processor, pd_id, utcb, 1);
+	thread->init(processor, pd, utcb, 1);
 	user_arg_0((Call_ret)thread->_pd->translation_table());
 }
 

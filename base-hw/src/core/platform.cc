@@ -24,6 +24,7 @@
 #include <platform.h>
 #include <platform_pd.h>
 #include <util.h>
+#include <pic.h>
 #include <kernel/kernel.h>
 #include <translation_table.h>
 
@@ -191,34 +192,36 @@ void Core_parent::exit(int exit_value)
 
 bool Genode::map_local(addr_t from_phys, addr_t to_virt, size_t num_pages, bool io_mem)
 {
-	/* insert mapping into core's translation table */
-	Translation_table *tt = Kernel::core_pd()->translation_table();
-	const Page_flags flags = Page_flags::map_core_area(io_mem);
-
 	try {
-		for (size_t i = 0; i < num_pages; i++) {
-			tt->insert_translation(to_virt, from_phys, get_page_size_log2(),
-			                        flags, Kernel::core_pd()->platform_pd()->page_slab());
-			from_phys += get_page_size();
-			to_virt   += get_page_size();
-		}
+		Translation_table *tt = Kernel::core_pd()->translation_table();
+		const Page_flags flags = Page_flags::map_core_area(io_mem);
+		tt->insert_translation(to_virt, from_phys, num_pages * get_page_size(),
+		                       flags, Kernel::core_pd()->platform_pd()->page_slab());
+		return true;
 	} catch(Allocator::Out_of_memory) {
 		PERR("Translation table needs to much RAM");
-		return false;
+	} catch(...) {
+		PERR("Invalid mapping %p -> %p (%zx)", (void*)from_phys, (void*)to_virt,
+		     get_page_size() * num_pages);
 	}
-	return true;
+	return false;
 }
 
 
 bool Genode::unmap_local(addr_t virt_addr, size_t num_pages)
 {
-	Translation_table *tt = Kernel::core_pd()->translation_table();
-	tt->remove_region(virt_addr, num_pages * get_page_size(),
-	                  Kernel::core_pd()->platform_pd()->page_slab());
+	try {
+		Translation_table *tt = Kernel::core_pd()->translation_table();
+		tt->remove_region(virt_addr, num_pages * get_page_size(),
+		                  Kernel::core_pd()->platform_pd()->page_slab());
 
-	/* update translation caches of all processors */
-	Kernel::update_pd(Kernel::core_pd()->id());
-	return true;
+		/* update translation caches of all processors */
+		Kernel::update_pd(Kernel::core_pd()->id());
+		return true;
+	} catch(...) {
+		PERR("tried to remove invalid region!");
+	}
+	return false;
 }
 
 

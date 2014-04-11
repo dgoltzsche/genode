@@ -192,9 +192,12 @@ class Kernel::Mode_transition_control
 		void map(Genode::Translation_table * tt,
 		         Genode::Physical_slab_allocator *alloc)
 		{
-			addr_t const phys_base = (addr_t)&_mt_begin;
-			tt->insert_translation(VIRT_BASE, phys_base, SIZE_LOG2,
-			                        Page_flags::mode_transition(), alloc);
+			try {
+				addr_t const phys_base = (addr_t)&_mt_begin;
+				tt->insert_translation(VIRT_BASE, phys_base, SIZE,
+				                       Page_flags::mode_transition(), alloc);
+			} catch(...) {
+				PERR("Inserting exception vector in page table failed!"); }
 		}
 
 		/**
