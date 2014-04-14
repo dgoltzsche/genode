@@ -105,9 +105,16 @@ append config {
 		<resource name="RAM" quantum="8M"/>
 		<config>
 			<iterations value="1"/>
+			<libc stdout="/dev/log" stderr="/dev/log">
+				<vfs>
+					<dir name="dev">
+						<block name="blkdev"/>
+						<log/>
+					</dir>
+				</vfs>
+			</libc>
 		</config>
-	</start>
-}
+	</start>}
 
 append_if [have_spec acpi] config {
 	<start name="acpi">
@@ -171,7 +178,7 @@ install_config $config
 # generic modules
 set boot_modules {
 	core init timer
-	ld.lib.so libc.lib.so libc_log.lib.so libc_block.lib.so
+	ld.lib.so libc.lib.so
 }
 
 append boot_modules test-libc_$filesystem
