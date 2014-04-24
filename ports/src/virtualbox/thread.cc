@@ -28,6 +28,9 @@
 
 extern "C" {
 
+	pthread_t create_emt_vcpu(size_t stack_size, const pthread_attr_t *attr,
+	                          void *(*start_routine) (void *), void *arg);
+
 	int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 	                   void *(*start_routine) (void *), void *arg)
 	{
@@ -45,6 +48,12 @@ extern "C" {
 			     "limit to %zu Bytes", rtthread->szName, rtthread->cbStack,
 			     stack_size);
 		
+		if (rtthread->enmType == RTTHREADTYPE_EMULATION) {
+
+			*thread = create_emt_vcpu(stack_size, attr, start_routine, arg);
+			return 0;
+		}
+
 		pthread_t thread_obj = new (Genode::env()->heap())
 		                           pthread(attr ? *attr : 0, start_routine,
 		                           arg, stack_size, rtthread->szName, nullptr);
