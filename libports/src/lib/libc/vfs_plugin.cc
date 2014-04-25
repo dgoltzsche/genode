@@ -683,6 +683,9 @@ int Libc::Vfs_plugin::ioctl(Libc::File_descriptor *fd, int request, char *argp)
 
 	case DIOCGMEDIASIZE:
 		{
+			/* resolve ambiguity with libc type */
+			using Genode::int64_t;
+
 			int64_t *disk_size = (int64_t*)arg;
 			*disk_size = out.diocgmediasize.size;
 			return 0;
