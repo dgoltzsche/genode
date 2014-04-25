@@ -538,7 +538,7 @@ class Vfs::Dir_file_system : public File_system
 				if (err == MKDIR_OK)
 					return err;
 
-				if (err != MKDIR_ERR_NO_ENTRY)
+				if (err != MKDIR_ERR_NO_ENTRY && err != MKDIR_ERR_NO_PERM)
 					return err;
 			}
 
