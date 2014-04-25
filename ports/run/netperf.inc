@@ -178,7 +178,7 @@ append config {
 			<arg value="-D"/>
 			<arg value="-4"/>
 			<arg value="-f"/>
-			<libc tx_buf_size="2M" rx_buf_size="2M"
+			<libc tx_buf_size="2M" rx_buf_size="2M"}
 append_if [have_spec linux] config " ip_addr=\"$lx_ip_addr\" netmask=\"255.255.255.0\" gateway=\"10.0.2.1\""
 append config {
 			      stdout="/dev/log" stderr="/dev/log">
