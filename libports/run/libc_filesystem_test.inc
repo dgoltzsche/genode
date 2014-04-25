@@ -107,8 +107,9 @@ append config {
 			<iterations value="1"/>
 			<libc stdout="/dev/log" stderr="/dev/log">
 				<vfs>
-					<dir name="dev">
-						<block name="blkdev"/>
+					<dir name="dev">}
+append config $libc_dev_blkdev
+append config {
 						<log/>
 					</dir>
 				</vfs>

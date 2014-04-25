@@ -214,6 +214,13 @@ class Plugin : public Libc::Plugin
 			return true;
 		}
 
+		bool supports_rmdir(const char *path) override
+		{
+			if (verbose)
+				PDBG("path = %s", path);
+			return true;
+		}
+
 		bool supports_stat(const char *path) override
 		{
 			if (verbose)
@@ -751,6 +758,11 @@ class Plugin : public Libc::Plugin
 					PERR("f_unlink() returned an unexpected error code");
 					return -1;
 			}
+		}
+
+		int rmdir(const char *path) override
+		{
+			return unlink(path);
 		}
 
 		ssize_t write(Libc::File_descriptor *fd, const void *buf, ::size_t count) override
