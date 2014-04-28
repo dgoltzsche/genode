@@ -1644,11 +1644,11 @@ namespace {
 		if (!noux_syscall(Noux::Session::SYSCALL_MKDIR)) {
 			PWRN("mkdir syscall failed for \"%s\" mode=0x%x", path, (int)mode);
 			switch (sysio()->error.mkdir) {
-			case Vfs::Directory_service::MKDIR_ERR_EXISTS:        PERR("A1"); errno = EEXIST;       break;
-			case Vfs::Directory_service::MKDIR_ERR_NO_ENTRY:      PERR("A2"); errno = ENOENT;       break;
-			case Vfs::Directory_service::MKDIR_ERR_NO_SPACE:      PERR("A3"); errno = ENOSPC;       break;
-			case Vfs::Directory_service::MKDIR_ERR_NAME_TOO_LONG: PERR("A4"); errno = ENAMETOOLONG; break;
-			case Vfs::Directory_service::MKDIR_ERR_NO_PERM:       PERR("A5"); errno = EPERM;        break;
+			case Vfs::Directory_service::MKDIR_ERR_EXISTS:        errno = EEXIST;       break;
+			case Vfs::Directory_service::MKDIR_ERR_NO_ENTRY:      errno = ENOENT;       break;
+			case Vfs::Directory_service::MKDIR_ERR_NO_SPACE:      errno = ENOSPC;       break;
+			case Vfs::Directory_service::MKDIR_ERR_NAME_TOO_LONG: errno = ENAMETOOLONG; break;
+			case Vfs::Directory_service::MKDIR_ERR_NO_PERM:       errno = EPERM;        break;
 			default:                                              errno = EPERM;        break;
 			}
 			return -1;
