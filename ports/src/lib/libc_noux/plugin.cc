@@ -1639,7 +1639,6 @@ namespace {
 
 	int Plugin::mkdir(const char *path, mode_t mode)
 	{
-		PDBG("mkdir");
 		Genode::strncpy(sysio()->mkdir_in.path, path, sizeof(sysio()->mkdir_in.path));
 
 		if (!noux_syscall(Noux::Session::SYSCALL_MKDIR)) {
