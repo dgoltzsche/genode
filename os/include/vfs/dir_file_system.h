@@ -54,6 +54,154 @@ class Vfs::Dir_file_system : public File_system
 
 		bool _is_root() const { return _name[0] == 0; }
 
+		/**
+		 * Perform operation on a file system
+		 *
+		 * \param fn  functor that takes a file-system reference and
+		 *            the path as arguments
+		 */
+		template <typename RES, typename FN>
+		RES _dir_op(RES const no_entry, RES const no_perm, RES const ok,
+		            char const *path, FN const &fn)
+		{
+			path = _sub_path(path);
+
+			/* path does not match directory name */
+			if (!path)
+				return no_entry;
+
+			/*
+			 * Prevent operation if path equals directory name defined
+			 * via the static VFS configuration.
+			 */
+			if (strlen(path) == 0)
+				return no_perm;
+
+			/*
+			 * If any of the sub file systems returns a permission error and
+			 * there exists no sub file system that takes the request, we
+			 * return the permission error.
+			 */
+			bool permission_denied = false;
+
+			/*
+			 * The given path refers to at least one of our sub directories.
+			 * Propagate the request into all of our file systems. If at least
+			 * one operation succeeds, we return success.
+			 */
+			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
+
+				RES const err = fn(*fs, path);
+
+				if (err == ok)
+					return err;
+
+				/*
+				 * Keep the most meaningful error code. When using stacked file
+				 * systems, most child file systems will eventually return no
+				 * entry (or leave the error code unchanged). If any of those
+				 * file systems has anything more interesting to tell (in
+				 * particular no perm), return this information.
+				 */
+				if (err != no_entry && err != no_perm)
+					return err;
+
+				if (err == no_perm)
+					permission_denied = true;
+			}
+
+			/* none of our file systems could successfully operate on the path */
+			return permission_denied ? no_perm : no_entry;
+		}
+
+		/**
+		 * Return portion of the path after the element corresponding to
+		 * the current directory.
+		 */
+		char const *_sub_path(char const *path) const
+		{
+			/* do not strip anything from the path when we are root */
+			if (_is_root())
+				return path;
+
+			/* skip heading slash in path if present */
+			if (path[0] == '/')
+				path++;
+
+			size_t const name_len = strlen(_name);
+			if (strcmp(path, _name, name_len) != 0)
+				return 0;
+			path += name_len;
+
+			/*
+			 * The first characters of the first path element are equal to
+			 * the current directory name. Let's check if the length of the
+			 * first path element matches the name length.
+			 */
+			if (*path != 0 && *path != '/')
+				return 0;
+
+			return path;
+		}
+
+		/**
+		 * The 'path' is relative to the child file systems.
+		 */
+		Dirent_result _dirent_of_file_systems(char const *path, off_t index, Dirent &out)
+		{
+			int base = 0;
+			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
+
+				/*
+				 * Determine number of matching directory entries within
+				 * the current file system.
+				 */
+				int const fs_num_dirent = fs->num_dirent(path);
+
+				/*
+				 * Query directory entry if index lies with the file
+				 * system.
+				 */
+				if (index - base < fs_num_dirent) {
+					index = index - base;
+					Dirent_result const err = fs->dirent(path, index, out);
+					out.fileno += base;
+					return err;
+				}
+
+				/* adjust base index for next file system */
+				base += fs_num_dirent;
+			}
+
+			out.type = DIRENT_TYPE_END;
+			return DIRENT_OK;
+		}
+
+		void _dirent_of_this_dir_node(off_t index, Dirent &out)
+		{
+			if (index == 0) {
+				strncpy(out.name, _name, sizeof(out.name));
+
+				out.type = DIRENT_TYPE_DIRECTORY;
+				out.fileno = 1;
+			} else {
+				out.type = DIRENT_TYPE_END;
+			}
+		}
+
+		/*
+		 * Accumulate number of directory entries that match in any of
+		 * our sub file systems.
+		 */
+		size_t _sum_dirents_of_file_systems(char const *path)
+		{
+			size_t cnt = 0;
+			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
+				cnt += fs->num_dirent(path);
+			}
+			return cnt;
+		}
+
 	public:
 
 		Dir_file_system(Xml_node node, File_system_factory &fs_factory)
@@ -87,36 +235,6 @@ class Vfs::Dir_file_system : public File_system
 				sub_node.type_name(type_name, sizeof(type_name));
 				PWRN("unknown fstab node type <%s>", type_name);
 			}
-		}
-
-		/**
-		 * Return portion of the path after the element corresponding to
-		 * the current directory.
-		 */
-		char const *_sub_path(char const *path) const
-		{
-			/* do not strip anything from the path when we are root */
-			if (_is_root())
-				return path;
-
-			/* skip heading slash in path if present */
-			if (path[0] == '/')
-				path++;
-
-			size_t const name_len = strlen(_name);
-			if (strcmp(path, _name, name_len) != 0)
-				return 0;
-			path += name_len;
-
-			/*
-			 * The first characters of the first path element are equal to
-			 * the current directory name. Let's check if the length of the
-			 * first path element matches the name length.
-			 */
-			if (*path != 0 && *path != '/')
-				return 0;
-
-			return path;
 		}
 
 
@@ -193,51 +311,6 @@ class Vfs::Dir_file_system : public File_system
 			return STAT_ERR_NO_ENTRY;
 		}
 
-		/**
-		 * The 'path' is relative to the child file systems.
-		 */
-		Dirent_result _dirent_of_file_systems(char const *path, off_t index, Dirent &out)
-		{
-			int base = 0;
-			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
-
-				/*
-				 * Determine number of matching directory entries within
-				 * the current file system.
-				 */
-				int const fs_num_dirent = fs->num_dirent(path);
-
-				/*
-				 * Query directory entry if index lies with the file
-				 * system.
-				 */
-				if (index - base < fs_num_dirent) {
-					index = index - base;
-					Dirent_result const err = fs->dirent(path, index, out);
-					out.fileno += base;
-					return err;
-				}
-
-				/* adjust base index for next file system */
-				base += fs_num_dirent;
-			}
-
-			out.type = DIRENT_TYPE_END;
-			return DIRENT_OK;
-		}
-
-		void _dirent_of_this_dir_node(off_t index, Dirent &out)
-		{
-			if (index == 0) {
-				strncpy(out.name, _name, sizeof(out.name));
-
-				out.type = DIRENT_TYPE_DIRECTORY;
-				out.fileno = 1;
-			} else {
-				out.type = DIRENT_TYPE_END;
-			}
-		}
-
 		Dirent_result dirent(char const *path, off_t index, Dirent &out) override
 		{
 			if (_is_root())
@@ -260,20 +333,7 @@ class Vfs::Dir_file_system : public File_system
 			return _dirent_of_file_systems(path, index, out);
 		}
 
-		/*
-		 * Accumulate number of directory entries that match in any of
-		 * our sub file systems.
-		 */
-		size_t _sum_dirents_of_file_systems(char const *path)
-		{
-			size_t cnt = 0;
-			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
-				cnt += fs->num_dirent(path);
-			}
-			return cnt;
-		}
-
-		size_t num_dirent(char const *path)
+		size_t num_dirent(char const *path) override
 		{
 			if (_is_root()) {
 				return _sum_dirents_of_file_systems(path);
@@ -299,7 +359,7 @@ class Vfs::Dir_file_system : public File_system
 			}
 		}
 
-		bool is_directory(char const *path)
+		bool is_directory(char const *path) override
 		{
 			path = _sub_path(path);
 			if (!path)
@@ -315,7 +375,7 @@ class Vfs::Dir_file_system : public File_system
 			return false;
 		}
 
-		char const *leaf_path(char const *path)
+		char const *leaf_path(char const *path) override
 		{
 			path = _sub_path(path);
 			if (!path)
@@ -376,90 +436,31 @@ class Vfs::Dir_file_system : public File_system
 			return OPEN_ERR_UNACCESSIBLE;
 		}
 
-		Unlink_result unlink(char const *path)
+		Unlink_result unlink(char const *path) override
 		{
-			path = _sub_path(path);
+			auto unlink_fn = [] (File_system &fs, char const *path)
+			{
+				return fs.unlink(path);
+			};
 
-			/* path does not match directory name */
-			if (!path)
-				return UNLINK_ERR_NO_ENTRY;
-
-			/*
-			 * Prevent unlinking if path equals directory name defined
-			 * via the static fstab configuration.
-			 */
-			if (strlen(path) == 0)
-				return UNLINK_ERR_NO_PERM;
-
-			/*
-			 * The given path refers to at least one of our sub
-			 * directories. Propagate the request into all of our file
-			 * systems. If at least one unlink operation succeeded, we
-			 * return success.
-			 */
-			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
-
-				Unlink_result const err = fs->unlink(path);
-
-				if (err == UNLINK_OK)
-					return err;
-
-				/*
-				 * Keep the most meaningful error code. When using stacked file
-				 * systems, most child file systems will eventually return
-				 * 'UNLINK_ERR_NO_ENTRY' (or leave the error code unchanged).
-				 * If any of those file systems has anything more interesting
-				 * to tell (in particular 'UNLINK_ERR_NO_PERM'), return this
-				 * information.
-				 */
-				if (err != UNLINK_ERR_NO_ENTRY)
-					return err;
-			}
-
-			/* none of our file systems could successfully unlink the path */
-			return UNLINK_ERR_NO_ENTRY;
+			return _dir_op(UNLINK_ERR_NO_ENTRY, UNLINK_ERR_NO_PERM, UNLINK_OK,
+			               path, unlink_fn);
 		}
 
 		Readlink_result readlink(char const *path, char *buf, size_t buf_size,
-		                      size_t &out_len)
+		                      size_t &out_len) override
 		{
-			path = _sub_path(path);
+			auto readlink_fn = [&] (File_system &fs, char const *path)
+			{
+				return fs.readlink(path, buf, buf_size, out_len);
+			};
 
-			/* path does not match directory name */
-			if (!path)
-				return READLINK_ERR_NO_ENTRY;
-
-			/* path refers to any of our sub file systems */
-			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
-
-				Readlink_result const err = fs->readlink(path, buf, buf_size, out_len);
-
-				if (err == READLINK_OK)
-					return err;
-
-				if (err != READLINK_ERR_NO_ENTRY)
-					return err;
-			}
-
-			/* none of our file systems could read the link */
-			return READLINK_ERR_NO_ENTRY;
+			return _dir_op(READLINK_ERR_NO_ENTRY, READLINK_ERR_NO_ENTRY, READLINK_OK,
+			               path, readlink_fn);
 		}
 
-		Rename_result rename(char const *from_path, char const *to_path)
+		Rename_result rename(char const *from_path, char const *to_path) override
 		{
-			from_path = _sub_path(from_path);
-
-			/* path does not match directory name */
-			if (!from_path)
-				return RENAME_ERR_NO_ENTRY;
-
-			/*
-			 * Prevent renaming if path equals directory name defined
-			 * via the static fstab configuration.
-			 */
-			if (strlen(from_path) == 0)
-				return RENAME_ERR_NO_PERM;
-
 			/*
 			 * Check if destination path resides within the same file
 			 * system instance as the source path.
@@ -468,82 +469,35 @@ class Vfs::Dir_file_system : public File_system
 			if (!to_path)
 				return RENAME_ERR_CROSS_FS;
 
-			/* path refers to any of our sub file systems */
-			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
+			auto rename_fn = [&] (File_system &fs, char const *from_path)
+			{
+				return fs.rename(from_path, to_path);
+			};
 
-				Rename_result const err = fs->rename(from_path, to_path);
-
-				if (err == RENAME_OK)
-					return err;
-
-				if (err != RENAME_ERR_NO_ENTRY)
-					return err;
-			}
-
-			/* none of our file systems could successfully rename the path */
-			return RENAME_ERR_NO_ENTRY;
+			return _dir_op(RENAME_ERR_NO_ENTRY, RENAME_ERR_NO_PERM, RENAME_OK,
+			               from_path, rename_fn);
 		}
 
-		Symlink_result symlink(char const *from, char const *to)
+		Symlink_result symlink(char const *from, char const *to) override
 		{
-			char const *path = _sub_path(to);
+			auto symlink_fn = [&] (File_system &fs, char const *to)
+			{
+				return fs.symlink(from, to);
+			};
 
-			/* path does not match directory name */
-			if (!path)
-				return SYMLINK_ERR_NO_ENTRY;
-
-			/*
-			 * Prevent symlink of path that equals directory name defined
-			 * via the static fstab configuration.
-			 */
-			if (strlen(path) == 0)
-				return SYMLINK_ERR_EXISTS;
-
-			/* path refers to any of our sub file systems */
-			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
-
-				Symlink_result const err = fs->symlink(from, path);
-
-				if (err == SYMLINK_OK)
-					return err;
-
-				if (err != SYMLINK_ERR_NO_ENTRY)
-					return err;
-			}
-
-			/* none of our file systems could create the symlink */
-			return SYMLINK_ERR_NO_ENTRY;
+			return _dir_op(SYMLINK_ERR_NO_ENTRY, SYMLINK_ERR_NO_PERM, SYMLINK_OK,
+			               to, symlink_fn);
 		}
 
-		Mkdir_result mkdir(char const *path, unsigned mode)
+		Mkdir_result mkdir(char const *path, unsigned mode) override
 		{
-			path = _sub_path(path);
+			auto mkdir_fn = [&] (File_system &fs, char const *path)
+			{
+				return fs.mkdir(path, mode);
+			};
 
-			/* path does not match directory name */
-			if (!path)
-				return MKDIR_ERR_NO_ENTRY;
-
-			/*
-			 * Prevent mkdir of path that equals directory name defined
-			 * via the static fstab configuration.
-			 */
-			if (strlen(path) == 0)
-				return MKDIR_ERR_EXISTS;
-
-			/* path refers to any of our sub file systems */
-			for (File_system *fs = _first_file_system; fs; fs = fs->next) {
-
-				Mkdir_result const err = fs->mkdir(path, mode);
-
-				if (err == MKDIR_OK)
-					return err;
-
-				if (err != MKDIR_ERR_NO_ENTRY && err != MKDIR_ERR_NO_PERM)
-					return err;
-			}
-
-			/* none of our file systems could create the directory */
-			return MKDIR_ERR_NO_ENTRY;
+			return _dir_op(MKDIR_ERR_NO_ENTRY, MKDIR_ERR_NO_PERM, MKDIR_OK,
+			               path, mkdir_fn);
 		}
 
 
