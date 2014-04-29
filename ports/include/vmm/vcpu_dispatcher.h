@@ -64,9 +64,9 @@ class Vmm::Vcpu_dispatcher : public T
 		{
 			using namespace Genode;
 
-			/* request creation of a 'local' EC */                              
-			T::_tid.ec_sel = Native_thread::INVALID_INDEX - 1;                     
-			T::start();                                               
+			/* request creation of a 'local' EC */
+			T::_tid.ec_sel = Native_thread::INVALID_INDEX - 1;
+			T::start();
 
 		}
 
@@ -78,9 +78,9 @@ class Vmm::Vcpu_dispatcher : public T
 		{
 			using namespace Genode;
 
-			/* request creation of a 'local' EC */                              
-			T::_tid.ec_sel = Native_thread::INVALID_INDEX - 1;                     
-			T::start();                                               
+			/* request creation of a 'local' EC */
+			T::_tid.ec_sel = Native_thread::INVALID_INDEX - 1;
+			T::start();
 		}
 
 		/**
