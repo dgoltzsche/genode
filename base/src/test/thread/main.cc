@@ -51,7 +51,7 @@ static void test_context_alloc()
 	 * Create HELPER threads, which concurrently create CHILDREN threads each.
 	 * This most likely triggers any race in the thread-context allocation.
 	 */
-	enum { HELPER = 10, CHILDREN = 10 };
+	enum { HELPER = 10, CHILDREN = 9 };
 
 	Helper<CHILDREN> helper[HELPER];
 
