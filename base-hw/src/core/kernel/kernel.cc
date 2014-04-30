@@ -351,9 +351,6 @@ extern "C" void kernel()
 	Processor_client * const old_occupant = scheduler->occupant();
 	old_occupant->exception(processor_id);
 
-	/* check for TLB maintainance requirements */
-	processor->flush_tlb();
-
 	/*
 	 * The processor local as well as remote exception-handling may have
 	 * changed the scheduling of the local activities. Hence we must update the
