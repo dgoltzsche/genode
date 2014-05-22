@@ -114,63 +114,28 @@ set config {
 			<image>background.png</image>
 		</config>
 	</start>
-	<start name="menu">
-		<binary name="static_menu"/>
-		<resource name="RAM" quantum="200M"/>
+	<!--
+	<start name="crystals">
+		<binary name="crystals"/>
+		<resource name="RAM" quantum="32M"/>
+	</start>
+	-->
+	<start name="vmm">
+		<resource name="RAM" quantum="4M"/>
 		<route>
 			<service name="LOG">         <child name="terminal_log"/> </service>
 			<service name="Framebuffer"> <child name="fb_drv"/> </service>
-			<any-service> <any-child/> <parent/></any-service>
+			<any-service><any-child/><parent/></any-service>
 		</route>
-		<config>
-			<banner xpos="272" ypos="170" width="480" height="384"/>
-			<menu xpos="16" ypos="16">
-				<image png="default.png"/>
-				<image-hover png="hover.png"/>
-				<image-selected png="selected.png"/>
-				<image-hselected png="hselected.png"/>
-
-				<entry name="crystals" xpos="26" ypos="153" width="131" height="24">
-					<binary name="crystals"/>
-					<resource name="RAM" quantum="32M"/>
-					<view xpos="16" ypos="147" width="158" height="35"/>
-				</entry>
-
-				<entry name="trustzone" xpos="26" ypos="188" width="131" height="24">
-					<binary name="init"/>
-					<resource name="RAM" quantum="45M"/>
-					<config>
-						<parent-provides>
-							<service name="ROM"/>
-							<service name="RAM"/>
-							<service name="IRQ"/>
-							<service name="IO_MEM"/>
-							<service name="CAP"/>
-							<service name="PD"/>
-							<service name="RM"/>
-							<service name="CPU"/>
-							<service name="LOG"/>
-							<service name="SIGNAL"/>
-							<service name="VM"/>
-							<service name="Timer"/>
-							<service name="Nitpicker"/>
-							<service name="Framebuffer"/>
-						</parent-provides>
-						<default-route>
-							<any-service><any-child/><parent/></any-service>
-						</default-route>
-						<start name="vmm">
-							<resource name="RAM" quantum="4M"/>
-						</start>
-						<start name="qt_vmm">
-							<resource name="RAM" quantum="45M"/>
-							<provides><service name="Vmmgui"/></provides>
-						</start>
-					</config>
-					<view xpos="16" ypos="182" width="158" height="35"/>
-				</entry>
-			</menu>
-		</config>
+	</start>
+	<start name="qt_vmm">
+		<resource name="RAM" quantum="45M"/>
+		<provides><service name="Vmmgui"/></provides>
+		<route>
+			<service name="LOG">         <child name="terminal_log"/> </service>
+			<service name="Framebuffer"> <child name="fb_drv"/> </service>
+			<any-service><any-child/><parent/></any-service>
+		</route>
 	</start>
 </config>}
 

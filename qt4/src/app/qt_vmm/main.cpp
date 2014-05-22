@@ -44,7 +44,6 @@ int main(int argc, char *argv[])
 	f &= ~(Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint);
 	main_window->setWindowFlags(/*f*/Qt::CustomizeWindowHint | Qt::FramelessWindowHint);
 	main_window->show();
-	main_window->move(550, 16);
 
 	return app.exec();
 }
